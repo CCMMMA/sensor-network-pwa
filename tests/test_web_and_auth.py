@@ -6,6 +6,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -483,6 +484,29 @@ class WebAndAuthTests(unittest.TestCase):
         for char in "<>&'":
             self.assertNotIn(char, island)
         self.assertIn(hostile, [station["uuid"] for station in json.loads(island)["stations"]])
+
+    def test_workers_starting_together_on_a_new_database_both_boot(self):
+        # Each Gunicorn worker opens the store itself, so the process lock does not serialise them.
+        for attempt in range(10):
+            path = str(Path(self.temp.name) / f"race{attempt}.sqlite")
+            stores = [AccessStore(path), AccessStore(path)]
+            barrier = threading.Barrier(len(stores))
+            errors = []
+
+            def boot(store, barrier=barrier, errors=errors):
+                barrier.wait()
+                try:
+                    store.ensure_admin("admin", STRONG)
+                except Exception as error:  # noqa: BLE001 - reported by the assertion below
+                    errors.append(error)
+
+            threads = [threading.Thread(target=boot, args=(store,)) for store in stores]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(errors, [])
+            self.assertEqual([user["username"] for user in stores[0].list_users()], ["admin"])
 
     def test_application_factory_registers_blueprints_and_isolates_state(self):
         endpoints = {rule.endpoint for rule in self.app.url_map.iter_rules()} - {"static"}

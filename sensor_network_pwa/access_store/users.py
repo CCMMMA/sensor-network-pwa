@@ -23,11 +23,14 @@ class UsersMixin(StoreBase):
             if row is not None:
                 return
             weak = password in WEAK_ADMIN_PASSWORDS
-            con.execute(
-                "INSERT INTO users(username,password_hash,email,role,active,created_at,force_password_change)"
+            # Gunicorn workers start together: on a new database another one may insert first.
+            cur = con.execute(
+                "INSERT OR IGNORE INTO users(username,password_hash,email,role,active,created_at,force_password_change)"
                 " VALUES(?,?,?,?,?,?,?)",
                 (username, generate_password_hash(password), "", "admin", 1, now_utc_iso(), 1 if weak else 0),
             )
+            if cur.rowcount == 0:
+                return
             logger.info("Created default admin user '%s'", username)
             if weak:
                 logger.warning(
