@@ -8,6 +8,7 @@ project only reads that data and serves it. It never connects to MQTT.
 
 ## Features
 
+- Installable progressive web app (web manifest, service worker, offline page) built on Bootstrap
 - Map-based station discovery on the home page
 - Data browsing per station with configurable charts and tables
 - Live station trend pages and a public sensor network dashboard
@@ -67,6 +68,7 @@ and watchdog services from the same image (see [Docker deployment](docs/docker.m
 | `authDbPath` | SQLite file for accounts, policies, anomalies, chart settings |
 | `baseUrl` | URL users open; used in email links and to accept form submissions |
 | `webSessionSecret` | Secret signing the session cookies |
+| `webAppName`, `webAppShortName` | Names shown when the app is installed |
 | `adminUser`, `adminPassword` | Initial admin account, created only if missing |
 | `influxdb`, `influxdb*` | Optional InfluxDB v2 read access |
 | `smtp*` | Optional email delivery (alarms, onboarding, password reset) |
@@ -109,6 +111,7 @@ still `<pathStorage>/collector_auth.sqlite`, so existing accounts and policies a
 - [Operations and troubleshooting](docs/operations.md)
 - [Development and validation](docs/development.md)
 - [Continuous integration and image delivery](docs/ci-cd.md)
+- [Migrating from the GUI embedded in sensor-network-collector](docs/migration.md)
 
 ## Tests
 
@@ -126,7 +129,10 @@ python3 -m unittest discover -s tests -v
   to sign sessions: a random secret is generated and kept in the auth database instead.
 - Serve the application behind TLS/a reverse proxy.
 - Public station dashboards (`/public/station/<uuid>`) are readable without login for
-  every station, whatever its download policy.
+  `open` and `account` stations. `restricted` stations are hidden from everyone except
+  their assigned users and admins.
+- The service worker caches only static assets; pages and API data are never stored
+  on the device.
 - Login attempts are not rate limited by the application; add a limit at the reverse
   proxy when the portal is exposed to the Internet.
 - Pages load Bootstrap, Leaflet, and Chart.js from public CDNs and map tiles from

@@ -26,7 +26,8 @@
 - storage readers (`collect_instruments`, `iter_csv_rows`, `load_station_rows`, ...) for `<pathStorage>/<station>/YYYY/MM/DD/<station>_YYYYMMDDZHH00.csv`
 - chart and public-dashboard models (`build_public_station_snapshot`, axis helpers)
 - anomaly evaluation and the watchdog loop
-- `create_web_app`: every Flask route, with HTML/JS templates inline as `render_template_string`
+- progressive web app assets (`PWA_SERVICE_WORKER_JS`, `PWA_BODY_SNIPPET`, `build_pwa_icon_png`)
+- `create_web_app`: every Flask route, with HTML/JS templates inline as `render_template_string`; the `add_pwa_markup` response hook adds the manifest link and service-worker registration to every page
 - `main()`; `webapp_wsgi.py` builds the same app for Gunicorn without the watchdog
 
 ## Development Guidelines
@@ -42,6 +43,9 @@
 - Embed JSON in `<script>` blocks with `json_for_script` or the `tojson` filter.
 - New routes must check access with `require_login`/`require_admin` and `station_is_accessible`/`station_is_controllable`. State-changing routes must use `POST`, which the cross-site check covers.
 - Build links in templates and scripts with `url_for`; build links for emails with `compose_external_url(cfg["base_url"], ...)`.
+- Every page template starts with `<!doctype html>` and needs both `</head>` and `</body>` so the PWA markup is added.
+- The service worker must never cache pages or `/api/` responses; bump the `CACHE` name in `PWA_SERVICE_WORKER_JS` when its cached assets change.
+- A station's public dashboard and home-page entry must go through `station_is_public`.
 - Tokens are single use: claim them with an `UPDATE ... WHERE used_at IS NULL` inside the store lock.
 
 ## Validation

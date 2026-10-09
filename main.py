@@ -1,5 +1,6 @@
 import argparse
 import csv
+import functools
 import hashlib
 import json
 import logging
@@ -12,11 +13,13 @@ import signal
 import sqlite3
 import smtplib
 import statistics
+import struct
 import sys
 import tempfile
 import threading
 import uuid
 import zipfile
+import zlib
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
@@ -25,6 +28,7 @@ from urllib.parse import urlencode, urlsplit
 
 from flask import Flask, abort, jsonify, redirect, render_template_string, request, send_file, session, url_for
 from influxdb_client import InfluxDBClient
+from markupsafe import escape
 from werkzeug.security import check_password_hash, generate_password_hash
 
 
@@ -175,6 +179,12 @@ def load_config(path: str) -> dict:
             cfg_value(raw, ["adminPassword"], env_name="ADMIN_PASSWORD", default="admin") or "admin"
         ),
         "web_app_logo": str(cfg_value(raw, ["webAppLogo"], env_name="WEB_APP_LOGO", default="") or ""),
+        "web_app_name": str(
+            cfg_value(raw, ["webAppName"], env_name="WEB_APP_NAME", default="") or ""
+        ).strip() or "Sensor Network Data Portal",
+        "web_app_short_name": str(
+            cfg_value(raw, ["webAppShortName"], env_name="WEB_APP_SHORT_NAME", default="") or ""
+        ).strip() or "Sensor Network",
         "web_app_link": str(cfg_value(raw, ["webAppLink"], env_name="WEB_APP_LINK", default="") or "").strip(),
         "web_info_link": str(cfg_value(raw, ["webInfoLink"], env_name="WEB_INFO_LINK", default="") or "").strip(),
         "base_url": str(cfg_value(raw, ["baseUrl"], env_name="BASE_URL", default="") or "").strip(),
@@ -2861,6 +2871,126 @@ def _run_watchdog_scan(cfg: dict, access_store: AccessStore, storage_root: str):
             logger.exception("Watchdog check failed for station=%s", instrument_uuid)
 
 
+# ----------------------------
+# Progressive web app assets
+# ----------------------------
+PWA_THEME_COLOR = "#0b57d0"
+PWA_ICON_SIZES = (180, 192, 512)
+
+# The worker keeps only static assets and the offline page: pages and API responses
+# depend on the logged-in user and are always fetched from the network.
+PWA_SERVICE_WORKER_JS = """
+const CACHE = 'sensor-network-pwa-v1';
+const OFFLINE_URL = __OFFLINE_URL__;
+const PRECACHE = __PRECACHE__;
+const STATIC_HOSTS = ['cdn.jsdelivr.net', 'unpkg.com'];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((cache) => Promise.all(PRECACHE.map((url) => cache.add(url).catch(() => null))))
+      .then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', (event) => {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+
+  if (STATIC_HOSTS.includes(url.hostname) || PRECACHE.includes(url.pathname)) {
+    event.respondWith(
+      caches.open(CACHE).then(async (cache) => {
+        const cached = await cache.match(request);
+        const refresh = fetch(request)
+          .then((response) => {
+            if (response.ok) cache.put(request, response.clone());
+            return response;
+          })
+          .catch(() => cached);
+        return cached || refresh;
+      })
+    );
+    return;
+  }
+
+  if (request.mode === 'navigate') {
+    event.respondWith(fetch(request).catch(() => caches.match(OFFLINE_URL)));
+  }
+});
+"""
+
+PWA_BODY_SNIPPET = """
+<div id="pwaOfflineBanner" class="alert alert-warning shadow-sm position-fixed bottom-0 start-50 translate-middle-x mb-3 py-2 px-3 d-none" role="status" style="z-index:2000">You are offline. Data shown may be out of date.</div>
+<button id="pwaInstallButton" type="button" class="btn btn-primary shadow position-fixed bottom-0 end-0 m-3 d-none" style="z-index:2000">Install app</button>
+<script>
+(function () {
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register(__SW_URL__, { scope: __SCOPE__ }).catch(function () {});
+    });
+  }
+  var banner = document.getElementById('pwaOfflineBanner');
+  function showConnectivity() { banner.classList.toggle('d-none', navigator.onLine); }
+  window.addEventListener('online', showConnectivity);
+  window.addEventListener('offline', showConnectivity);
+  showConnectivity();
+  var button = document.getElementById('pwaInstallButton');
+  var installPrompt = null;
+  window.addEventListener('beforeinstallprompt', function (event) {
+    event.preventDefault();
+    installPrompt = event;
+    button.classList.remove('d-none');
+  });
+  button.addEventListener('click', function () {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    installPrompt = null;
+    button.classList.add('d-none');
+  });
+  window.addEventListener('appinstalled', function () { button.classList.add('d-none'); });
+})();
+</script>
+"""
+
+
+def _png_chunk(kind: bytes, data: bytes) -> bytes:
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+
+@functools.lru_cache(maxsize=None)
+def build_pwa_icon_png(size: int) -> bytes:
+    """Application icon: a sensor dot with two signal rings on the theme colour."""
+    bg = bytes(int(PWA_THEME_COLOR[i:i + 2], 16) for i in (1, 3, 5))
+    fg = b"\xff\xff\xff"
+    half = size / 2
+    # Everything stays inside the central 80% so the icon also works as a maskable one.
+    bands = ((0.0, 0.09), (0.17, 0.23), (0.31, 0.37))
+    rows = []
+    for y in range(size):
+        dy = (y + 0.5 - half) / size
+        row = bytearray(b"\x00")
+        for x in range(size):
+            dist = math.hypot((x + 0.5 - half) / size, dy)
+            row += fg if any(lo <= dist < hi for lo, hi in bands) else bg
+        rows.append(bytes(row))
+    header = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", header)
+        + _png_chunk(b"IDAT", zlib.compress(b"".join(rows), 9))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
 def create_web_app(cfg: dict, access_store: AccessStore):
     app = Flask(__name__)
     session_secret = cfg["web_session_secret"]
@@ -2910,6 +3040,102 @@ def create_web_app(cfg: dict, access_store: AccessStore):
         response.headers.setdefault("Referrer-Policy", "same-origin")
         return response
 
+    @app.after_request
+    def add_pwa_markup(response):
+        # Every page is an inline template, so the PWA tags are added here once.
+        if response.mimetype != "text/html" or response.direct_passthrough:
+            return response
+        html = response.get_data(as_text=True)
+        if "</head>" not in html or "</body>" not in html:
+            return response
+        app_name = escape(cfg["web_app_name"])
+        head = (
+            f'<link rel="manifest" href="{url_for("pwa_manifest")}">'
+            f'<meta name="theme-color" content="{PWA_THEME_COLOR}">'
+            f'<meta name="application-name" content="{app_name}">'
+            '<meta name="mobile-web-app-capable" content="yes">'
+            '<meta name="apple-mobile-web-app-capable" content="yes">'
+            f'<meta name="apple-mobile-web-app-title" content="{app_name}">'
+            f'<link rel="icon" type="image/png" sizes="192x192" href="{url_for("pwa_icon", size=192)}">'
+            f'<link rel="apple-touch-icon" href="{url_for("pwa_icon", size=180)}">'
+        )
+        body = PWA_BODY_SNIPPET.replace("__SW_URL__", json_for_script(url_for("pwa_service_worker"))).replace(
+            "__SCOPE__", json_for_script(url_for("index"))
+        )
+        html = html.replace("</head>", head + "</head>", 1)
+        cut = html.rindex("</body>")
+        response.set_data(html[:cut] + body + html[cut:])
+        return response
+
+    @app.route("/manifest.webmanifest")
+    def pwa_manifest():
+        icons = [
+            {"src": url_for("pwa_icon", size=size), "sizes": f"{size}x{size}", "type": "image/png", "purpose": purpose}
+            for size in (192, 512)
+            for purpose in ("any", "maskable")
+        ]
+        manifest = {
+            "name": cfg["web_app_name"],
+            "short_name": cfg["web_app_short_name"],
+            "description": "Sensor network data portal: station map, live dashboards, data browsing and download.",
+            "id": url_for("index"),
+            "start_url": url_for("index"),
+            "scope": url_for("index"),
+            "display": "standalone",
+            "background_color": "#ffffff",
+            "theme_color": PWA_THEME_COLOR,
+            "icons": icons,
+        }
+        response = app.response_class(json.dumps(manifest), mimetype="application/manifest+json")
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    @app.route("/service-worker.js")
+    def pwa_service_worker():
+        precache = [url_for("pwa_offline"), url_for("pwa_manifest")]
+        precache += [url_for("pwa_icon", size=size) for size in PWA_ICON_SIZES]
+        script = PWA_SERVICE_WORKER_JS.replace("__OFFLINE_URL__", json.dumps(url_for("pwa_offline"))).replace(
+            "__PRECACHE__", json.dumps(precache)
+        )
+        response = app.response_class(script, mimetype="text/javascript")
+        # Browsers must revalidate the worker so that updates are picked up.
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    @app.route("/pwa/icon-<int:size>.png")
+    def pwa_icon(size: int):
+        if size not in PWA_ICON_SIZES:
+            abort(404)
+        response = app.response_class(build_pwa_icon_png(size), mimetype="image/png")
+        response.headers["Cache-Control"] = "public, max-age=86400"
+        return response
+
+    @app.route("/offline")
+    def pwa_offline():
+        return render_template_string(
+            """
+            <!doctype html>
+            <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <title>Offline - {{ app_name }}</title>
+              <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+              <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            </head>
+            <body class="container py-5">
+              <div class="card shadow-sm mx-auto" style="max-width: 32rem;">
+                <div class="card-body text-center">
+                  <h1 class="h4">You are offline</h1>
+                  <p class="text-muted">{{ app_name }} needs a network connection to load station data.</p>
+                  <button class="btn btn-primary" type="button" onclick="window.location.reload()">Try again</button>
+                </div>
+              </div>
+            </body>
+            </html>
+            """,
+            app_name=cfg["web_app_name"],
+        )
+
     def send_image_asset(path: Path):
         mime, _ = mimetypes.guess_type(str(path))
         response = send_file(path, mimetype=mime or "application/octet-stream")
@@ -2933,7 +3159,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
 
     @app.before_request
     def enforce_password_change():
-        if request.endpoint in ("change_password", "logout", "asset_file", "static"):
+        if request.endpoint in (
+            "change_password", "logout", "asset_file", "static",
+            "pwa_manifest", "pwa_service_worker", "pwa_icon", "pwa_offline",
+        ):
             return None
         user = current_user()
         if user and int(user.get("force_password_change") or 0) == 1:
@@ -2967,6 +3196,12 @@ def create_web_app(cfg: dict, access_store: AccessStore):
 
     def station_is_accessible(user, instrument_uuid: str):
         return access_store.can_download(user, instrument_uuid)
+
+    def station_is_public(user, instrument_uuid: str):
+        # Restricted stations are shown only to the users assigned to them.
+        return access_store.get_policy(instrument_uuid) != "restricted" or access_store.can_download(
+            user, instrument_uuid
+        )
 
     def station_is_controllable(user, instrument_uuid: str):
         return access_store.can_control_station(user, instrument_uuid)
@@ -3011,8 +3246,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
 
         stations = []
         for inst in instruments:
-            preview = get_station_preview(storage_root, inst)
             can_access = station_is_accessible(user, inst)
+            if policies.get(inst) == "restricted" and not can_access:
+                continue
+            preview = get_station_preview(storage_root, inst)
             stations.append(
                 {
                     "uuid": inst,
@@ -3039,8 +3276,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
 
         return render_template_string(
             """
-            <html>
+            <!doctype html>
+            <html lang="en">
             <head>
+              <meta charset="utf-8">
               <title>Sensor Network Collector - Data Portal</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -3231,7 +3470,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
         if not rows:
             return render_template_string(
                 """
-                <html><body>
+                <!doctype html>
+                <html lang="en">
+                <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"/></head>
+                <body>
                   <p><a href="{{ url_for('index') }}">Home</a></p>
                   <h1>Station {{ station_name }} ({{ instrument_uuid }})</h1>
                   <p>No data rows found for the selected filters.</p>
@@ -3356,8 +3598,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
 
         return render_template_string(
             """
-            <html>
+            <!doctype html>
+            <html lang="en">
             <head>
+              <meta charset="utf-8">
               <title>Station {{ station_name }} ({{ instrument_uuid }})</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -4204,6 +4448,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
             abort(404, "Station not found")
 
         user = current_user()
+        if not station_is_public(user, instrument_uuid):
+            if user is None:
+                return redirect_to_login("Please log in to view this station.")
+            abort(404, "Station not found")
         can_browse_download = bool(user) and station_is_accessible(user, instrument_uuid)
         can_control = bool(user) and station_is_controllable(user, instrument_uuid)
         selected_window = request_preference_cookie(request, "window", "public_trend_window", normalize_public_window, "hour")
@@ -4221,8 +4469,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
             station_logo_url = url_for("asset_file", kind="station", name=Path(station_logo_row["logo_path"]).name)
         return render_template_string(
             """
-            <html>
+            <!doctype html>
+            <html lang="en">
             <head>
+              <meta charset="utf-8">
               <title>Public Station View - {{ snapshot.station_name }}</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -4819,7 +5069,7 @@ def create_web_app(cfg: dict, access_store: AccessStore):
     def public_station_snapshot(instrument_uuid: str):
         storage_root = storage_root_or_404()
         instruments = set(available_instruments(storage_root))
-        if instrument_uuid not in instruments:
+        if instrument_uuid not in instruments or not station_is_public(current_user(), instrument_uuid):
             abort(404, "Station not found")
 
         window = normalize_public_window(request.args.get("window", "hour"))
@@ -4864,8 +5114,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
 
         return render_template_string(
             """
-            <html>
+            <!doctype html>
+            <html lang="en">
             <head>
+              <meta charset="utf-8">
               <title>Login</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -4933,8 +5185,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                     err = txt
         return render_template_string(
             """
-            <html>
+            <!doctype html>
+            <html lang="en">
             <head>
+              <meta charset="utf-8">
               <title>Change password</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -4979,8 +5233,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
 
         return render_template_string(
             """
-            <html>
+            <!doctype html>
+            <html lang="en">
             <head>
+              <meta charset="utf-8">
               <title>Forgot password</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -5039,8 +5295,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
 
         return render_template_string(
             """
-            <html>
+            <!doctype html>
+            <html lang="en">
             <head>
+              <meta charset="utf-8">
               <title>Reset password</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -5111,8 +5369,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
 
         return render_template_string(
             """
-            <html>
+            <!doctype html>
+            <html lang="en">
             <head>
+              <meta charset="utf-8">
               <title>Request account</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -5162,7 +5422,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
         if request_row is None:
             return render_template_string(
                 """
-                <html><body class="container py-5">
+                <!doctype html>
+                <html lang="en">
+                <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"/></head>
+                <body class="container py-5">
                   <h1 class="h4">Onboarding link invalid</h1>
                   <p>This onboarding link is invalid, expired, or already used.</p>
                   <p><a href="{{ url_for('index') }}">Home</a></p>
@@ -5186,8 +5449,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                 err = text
         return render_template_string(
             """
-            <html>
+            <!doctype html>
+            <html lang="en">
             <head>
+              <meta charset="utf-8">
               <title>Complete onboarding</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -5323,8 +5588,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
 
         return render_template_string(
             """
-            <html>
+            <!doctype html>
+            <html lang="en">
             <head>
+              <meta charset="utf-8">
               <title>Admin panel</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -5437,8 +5704,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
 
         return render_template_string(
             """
-            <html>
+            <!doctype html>
+            <html lang="en">
             <head>
+              <meta charset="utf-8">
               <title>Sensor Network Dashboard</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -5638,8 +5907,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
         items = access_store.list_anomalies_for_user(user)
         return render_template_string(
             """
-            <html>
+            <!doctype html>
+            <html lang="en">
             <head>
+              <meta charset="utf-8">
               <title>Anomalies log</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -5740,8 +6011,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
         chart_specs = resolve_station_chart_specs(access_store, instrument_uuid)
         return render_template_string(
             """
-            <html>
+            <!doctype html>
+            <html lang="en">
             <head>
+              <meta charset="utf-8">
               <title>Trend chart axis settings - {{ station_name }}</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">

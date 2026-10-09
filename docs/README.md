@@ -6,6 +6,7 @@
 - [Docker deployment](docker.md): web and watchdog services sharing the collector's data volume.
 - [Operations](operations.md): process roles, runtime verification, backups, and failure diagnosis.
 - [Development and validation](development.md): local setup, tests, and change workflow.
+- [Migration](migration.md): replacing the web GUI that used to be part of `sensor-network-collector`.
 - [CI/CD](ci-cd.md): checks and GHCR images.
 
 `main.py` holds the application; `webapp_wsgi.py` exposes it to Gunicorn. The data

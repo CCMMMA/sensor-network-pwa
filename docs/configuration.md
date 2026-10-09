@@ -55,6 +55,10 @@ are ignored, so a configuration file shared with the collector works unchanged.
 - `adminUser`, `adminPassword`: used only to create the admin account when it does not
   exist yet; an account created with the default (`admin`) or a sample password must
   change it at first login
+- `webAppName` (`WEB_APP_NAME`): application name in the web manifest, shown when the
+  app is installed. Defaults to `Sensor Network Data Portal`
+- `webAppShortName` (`WEB_APP_SHORT_NAME`): name under the home-screen icon. Defaults
+  to `Sensor Network`
 - `webAppLogo`: optional absolute path to the app logo image
 - `webAppLink`: optional external URL opened when the home-page logo is clicked
 - `webInfoLink`: optional external URL shown as `Info` before `Login` on the home page

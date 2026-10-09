@@ -257,6 +257,47 @@ class WebAndAuthTests(unittest.TestCase):
                 self.assertFalse(self.store.create_account_request(email, "")[0])
         self.assertEqual(self.store.list_account_requests(), [])
 
+    def test_restricted_station_is_hidden_from_public_views(self):
+        self.store.set_policy("station", "restricted", "admin")
+        anonymous = self.client()
+        self.assertNotIn("/public/station/station", anonymous.get("/").get_data(as_text=True))
+        response = anonymous.get("/public/station/station")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/login", response.headers["Location"])
+        self.assertEqual(anonymous.get("/api/public/station/station/snapshot").status_code, 404)
+        bob = self.client("bob")
+        self.assertEqual(bob.get("/public/station/station").status_code, 404)
+        self.assertEqual(bob.get("/api/public/station/station/snapshot").status_code, 404)
+        self.store.set_user_instrument_access("bob", "station", True)
+        self.assertEqual(bob.get("/public/station/station").status_code, 200)
+        self.assertIn("/public/station/station", bob.get("/").get_data(as_text=True))
+        self.assertEqual(self.client("admin").get("/api/public/station/station/snapshot").status_code, 200)
+        self.store.set_policy("station", "account", "admin")
+        self.assertEqual(anonymous.get("/public/station/station").status_code, 200)
+
+    def test_pages_are_standards_mode_installable_pwa(self):
+        client = self.client("admin")
+        for path in ("/", "/login", "/station/station", "/public/station/station", "/admin", "/anomalies", "/offline"):
+            with self.subTest(path=path):
+                body = client.get(path).get_data(as_text=True)
+                self.assertTrue(body.lstrip().lower().startswith("<!doctype html>"))
+                self.assertEqual(body.count('<link rel="manifest" href="/manifest.webmanifest">'), 1)
+                self.assertEqual(body.count("navigator.serviceWorker.register"), 1)
+        manifest = client.get("/manifest.webmanifest").get_json(force=True)
+        self.assertEqual((manifest["display"], manifest["start_url"]), ("standalone", "/"))
+        for icon in manifest["icons"]:
+            response = client.get(icon["src"])
+            size = int(icon["sizes"].split("x")[0])
+            data = response.get_data()
+            self.assertEqual(response.mimetype, "image/png")
+            self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual(int.from_bytes(data[16:20], "big"), size)
+        self.assertEqual(client.get("/pwa/icon-64.png").status_code, 404)
+        worker = client.get("/service-worker.js")
+        self.assertEqual(worker.mimetype, "text/javascript")
+        self.assertEqual(worker.headers["Cache-Control"], "no-cache")
+        self.assertIn('"/offline"', worker.get_data(as_text=True))
+
     def test_config_needs_no_collector_settings(self):
         self.assertFalse(self.cfg["enable_influx"])
         self.assertTrue(self.cfg["auth_db_path"].endswith("collector_auth.sqlite"))
