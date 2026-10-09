@@ -27,7 +27,8 @@ or SMTP server is needed. It covers configuration loading without collector sett
 login redirects, anomaly log access, HTML/script escaping, cross-site write rejection,
 cookie and response headers, password policy, single-use tokens, default-admin
 handling, sandboxed logo serving, download cleanup, limited row loading, non-finite
-values, watchdog resilience, enforced password changes, rows longer than the CSV
+values, watchdog resilience, failure notifications (status changes, reminders, profile
+actions, login link), enforced password changes, rows longer than the CSV
 header, map popup escaping, session-secret fallback, the onboarding-only username
 check, email validation of account requests, hiding of restricted stations, selection
 of hourly files, the unchanged-poll shortcut, response compression, chart thinning,

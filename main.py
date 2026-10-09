@@ -248,6 +248,37 @@ def utc_now():
     return datetime.now(timezone.utc)
 
 
+def utc_iso(dt: datetime) -> str:
+    return dt.isoformat().replace("+00:00", "Z")
+
+
+# Minutes between reminder emails while a failure persists; 0 sends status changes only.
+DEFAULT_NOTIFICATION_INTERVAL_MIN = 60
+NOTIFICATION_INTERVAL_CHOICES = (
+    (0, "Status changes only (no reminders)"),
+    (15, "Every 15 minutes"),
+    (30, "Every 30 minutes"),
+    (60, "Every hour"),
+    (120, "Every 2 hours"),
+    (180, "Every 3 hours"),
+    (360, "Every 6 hours"),
+    (720, "Every 12 hours"),
+    (1440, "Every 24 hours"),
+)
+NOTIFICATION_SNOOZE_HOURS = (1, 4, 8, 24)
+NOTIFICATION_LINK_TTL_MIN = 60
+
+
+def normalize_notification_interval(value):
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_NOTIFICATION_INTERVAL_MIN
+    if minutes in {choice for choice, _ in NOTIFICATION_INTERVAL_CHOICES}:
+        return minutes
+    return DEFAULT_NOTIFICATION_INTERVAL_MIN
+
+
 # ----------------------------
 # Web GUI auth/policy store
 # ----------------------------
@@ -376,6 +407,19 @@ class AccessStore:
                             PRIMARY KEY (station_uuid, anomaly_type)
                         );
 
+                        CREATE TABLE IF NOT EXISTS notifications (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            username TEXT NOT NULL,
+                            anomaly_id INTEGER NOT NULL,
+                            created_at TEXT NOT NULL,
+                            last_sent_at TEXT,
+                            recovery_sent_at TEXT,
+                            acknowledged_at TEXT,
+                            snoozed_until TEXT,
+                            cleared_at TEXT,
+                            UNIQUE (username, anomaly_id)
+                        );
+
                         CREATE TABLE IF NOT EXISTS station_logos (
                             station_uuid TEXT PRIMARY KEY,
                             logo_path TEXT NOT NULL,
@@ -412,6 +456,11 @@ class AccessStore:
                         pass
                     try:
                         con.execute("ALTER TABLE account_requests ADD COLUMN reviewed_at TEXT")
+                    except sqlite3.OperationalError:
+                        pass
+                    try:
+                        # NULL means DEFAULT_NOTIFICATION_INTERVAL_MIN.
+                        con.execute("ALTER TABLE users ADD COLUMN notify_interval_min INTEGER")
                     except sqlite3.OperationalError:
                         pass
             except sqlite3.OperationalError as e:
@@ -966,6 +1015,8 @@ class AccessStore:
         expires = now + timedelta(minutes=max(1, ttl_minutes))
         with self._lock:
             with self._connect() as con:
+                # Reminder emails create a token each; keep the table from growing.
+                con.execute("DELETE FROM login_tokens WHERE expires_at < ?", (utc_iso(now - timedelta(days=1)),))
                 con.execute(
                     "INSERT INTO login_tokens(token,username,expires_at,created_at,used_at) VALUES(?,?,?,?,NULL)",
                     (
@@ -1081,39 +1132,149 @@ class AccessStore:
                 emails.update([r["email"] for r in rows if isinstance(r["email"], str) and r["email"].strip()])
             return sorted(emails)
 
-    def list_station_user_contacts(self, station_uuid: str):
+    def list_station_notification_users(self, station_uuid: str):
+        """Active users notified about a station: admins, plus the users its policy admits."""
         station_uuid = station_uuid.strip()
-        contacts = {}
+        policy = self.get_policy(station_uuid)
         with self._connect() as con:
-            admin_rows = con.execute(
-                "SELECT username,email FROM users WHERE role='admin' AND active=1 AND email IS NOT NULL AND email <> ''"
+            rows = con.execute(
+                "SELECT username,email,notify_interval_min FROM users WHERE role = 'admin' AND active = 1"
             ).fetchall()
-            for r in admin_rows:
-                contacts[r["email"]] = {"username": r["username"], "email": r["email"], "role": "admin"}
-
-            policy = self.get_policy(station_uuid)
             if policy == "account":
-                rows = con.execute(
-                    "SELECT username,email FROM users WHERE role='user' AND active=1 AND email IS NOT NULL AND email <> ''"
+                rows += con.execute(
+                    "SELECT username,email,notify_interval_min FROM users WHERE role = 'user' AND active = 1"
                 ).fetchall()
-                for r in rows:
-                    contacts[r["email"]] = {"username": r["username"], "email": r["email"], "role": "user"}
             elif policy == "restricted":
-                rows = con.execute(
+                rows += con.execute(
                     """
-                    SELECT u.username,u.email
+                    SELECT u.username,u.email,u.notify_interval_min
                     FROM users u
                     JOIN user_instruments ui ON ui.username = u.username
-                    WHERE ui.instrument_uuid = ? AND u.active=1 AND u.email IS NOT NULL AND u.email <> ''
+                    WHERE ui.instrument_uuid = ? AND u.active = 1
                     """,
                     (station_uuid,),
                 ).fetchall()
-                for r in rows:
-                    contacts[r["email"]] = {"username": r["username"], "email": r["email"], "role": "user"}
-        return list(contacts.values())
+        users = {}
+        for r in rows:
+            users[r["username"]] = {
+                "username": r["username"],
+                "email": (r["email"] or "").strip(),
+                "interval_min": normalize_notification_interval(r["notify_interval_min"]),
+            }
+        return list(users.values())
 
-    def upsert_anomaly(self, station_uuid: str, anomaly_type: str, message: str, severity: str = "warning"):
-        now = now_utc_iso()
+    def get_notification_interval(self, username: str):
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT notify_interval_min FROM users WHERE username = ?", (username,)
+            ).fetchone()
+        return normalize_notification_interval(row["notify_interval_min"] if row else None)
+
+    def set_notification_interval(self, username: str, minutes: int):
+        if minutes not in {choice for choice, _ in NOTIFICATION_INTERVAL_CHOICES}:
+            return False, "Unknown notification time"
+        with self._lock:
+            with self._connect() as con:
+                cur = con.execute(
+                    "UPDATE users SET notify_interval_min = ? WHERE username = ?", (minutes, username)
+                )
+                if cur.rowcount <= 0:
+                    return False, "User not found"
+        return True, "Notification time saved"
+
+    def sync_notifications(self, anomaly_id: int, usernames, now: datetime):
+        """Give each user a notification for the anomaly; returns them by username."""
+        with self._lock:
+            with self._connect() as con:
+                con.executemany(
+                    "INSERT OR IGNORE INTO notifications(username, anomaly_id, created_at) VALUES(?,?,?)",
+                    [(username, anomaly_id, utc_iso(now)) for username in usernames],
+                )
+                rows = con.execute("SELECT * FROM notifications WHERE anomaly_id = ?", (anomaly_id,)).fetchall()
+        return {r["username"]: dict(r) for r in rows}
+
+    def mark_notifications_sent(self, notification_ids, now: datetime, recovery: bool = False):
+        column = "recovery_sent_at" if recovery else "last_sent_at"
+        with self._lock:
+            with self._connect() as con:
+                con.executemany(
+                    f"UPDATE notifications SET {column} = ? WHERE id = ?",
+                    [(utc_iso(now), notification_id) for notification_id in notification_ids],
+                )
+
+    def list_pending_recovery_notifications(self, resolved_since: datetime):
+        """Notifications of ended failures whose user was told of the failure but not of its end."""
+        with self._connect() as con:
+            rows = con.execute(
+                """
+                SELECT n.id,n.username,u.email,a.station_uuid,a.anomaly_type,a.created_at AS failed_at,a.resolved_at
+                FROM notifications n
+                JOIN anomalies a ON a.id = n.anomaly_id
+                JOIN users u ON u.username = n.username
+                WHERE a.status = 'resolved' AND a.resolved_at >= ?
+                  AND n.last_sent_at IS NOT NULL AND n.recovery_sent_at IS NULL AND n.cleared_at IS NULL
+                  AND u.active = 1 AND u.email IS NOT NULL AND u.email <> ''
+                ORDER BY n.id
+                """,
+                (utc_iso(resolved_since),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_notifications_for_user(self, username: str, limit: int = 200):
+        with self._connect() as con:
+            rows = con.execute(
+                """
+                SELECT n.id,n.created_at,n.last_sent_at,n.recovery_sent_at,n.acknowledged_at,n.snoozed_until,
+                       a.station_uuid,a.anomaly_type,a.message,a.severity,a.status,
+                       a.created_at AS failed_at,a.resolved_at
+                FROM notifications n
+                JOIN anomalies a ON a.id = n.anomaly_id
+                WHERE n.username = ? AND n.cleared_at IS NULL
+                ORDER BY (a.status = 'open') DESC, n.id DESC
+                LIMIT ?
+                """,
+                (username, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_notification(self, username: str, notification_id: int, action: str, snooze_hours: int = 0):
+        """Clear, acknowledge or snooze one of the user's own notifications."""
+        now = utc_now()
+        with self._lock:
+            with self._connect() as con:
+                row = con.execute(
+                    """
+                    SELECT a.status
+                    FROM notifications n
+                    JOIN anomalies a ON a.id = n.anomaly_id
+                    WHERE n.id = ? AND n.username = ? AND n.cleared_at IS NULL
+                    """,
+                    (notification_id, username),
+                ).fetchone()
+                if row is None:
+                    return False, "Notification not found"
+                if action == "clear":
+                    con.execute("UPDATE notifications SET cleared_at = ? WHERE id = ?", (utc_iso(now), notification_id))
+                    return True, "Notification cleared"
+                if row["status"] != "open":
+                    return False, "The failure has already ended"
+                if action == "acknowledge":
+                    con.execute(
+                        "UPDATE notifications SET acknowledged_at = ? WHERE id = ?", (utc_iso(now), notification_id)
+                    )
+                    return True, "Notification acknowledged"
+                if action == "snooze" and snooze_hours in NOTIFICATION_SNOOZE_HOURS:
+                    con.execute(
+                        "UPDATE notifications SET snoozed_until = ? WHERE id = ?",
+                        (utc_iso(now + timedelta(hours=snooze_hours)), notification_id),
+                    )
+                    return True, f"Notification snoozed for {snooze_hours} h"
+        return False, "Unknown action"
+
+    def upsert_anomaly(
+        self, station_uuid: str, anomaly_type: str, message: str, severity: str = "warning", now: datetime = None
+    ):
+        now = utc_iso(now) if now else now_utc_iso()
         with self._lock:
             with self._connect() as con:
                 row = con.execute(
@@ -1140,8 +1301,10 @@ class AccessStore:
                 )
                 return cur.lastrowid, True
 
-    def resolve_anomaly(self, station_uuid: str, anomaly_type: str, message: str = "resolved"):
-        now = now_utc_iso()
+    def resolve_anomaly(
+        self, station_uuid: str, anomaly_type: str, message: str = "resolved", now: datetime = None
+    ):
+        now = utc_iso(now) if now else now_utc_iso()
         with self._lock:
             with self._connect() as con:
                 open_rows = con.execute(
@@ -2774,8 +2937,119 @@ def run_watchdog_loop(cfg: dict, access_store: AccessStore, stop_event: threadin
         stop_event.wait(interval)
 
 
-def _run_watchdog_scan(cfg: dict, access_store: AccessStore, storage_root: str):
-    now = utc_now()
+def anomaly_recovery_hold_seconds(cfg: dict) -> int:
+    """How long an anomaly must stay unseen before it counts as ended.
+
+    A condition that comes and goes between scans would otherwise produce a
+    failure and a recovery notification at every check.
+    """
+    return max(300, 3 * max(10, int(cfg.get("watchdog_interval_sec", 60))))
+
+
+def notification_due(notification: dict, interval_min: int, now: datetime):
+    """Which email an open failure owes its user now: 'failure', 'reminder' or None."""
+    if notification.get("cleared_at") or notification.get("acknowledged_at"):
+        return None
+    snoozed_until = parse_iso_ts(notification.get("snoozed_until") or "")
+    if snoozed_until is not None and snoozed_until > now:
+        return None
+    last_sent = parse_iso_ts(notification.get("last_sent_at") or "")
+    if last_sent is None:
+        return "failure"
+    if interval_min <= 0:
+        return None
+    return "reminder" if (now - last_sent).total_seconds() >= interval_min * 60 else None
+
+
+NOTIFICATION_EVENT_LABELS = {
+    "failure": "FAILURE",
+    "reminder": "STILL FAILING",
+    "recovery": "BACK TO REGULAR",
+}
+
+
+def build_notification_email(cfg: dict, events, interval_min: int, login_link: str):
+    """Subject and body of one email carrying all the events owed to a user."""
+    if len(events) == 1:
+        event = events[0]
+        subject = (
+            f"[Sensor Network] {NOTIFICATION_EVENT_LABELS[event['kind']]}: "
+            f"{event['station_uuid']} - {event['anomaly_type']}"
+        )
+    else:
+        subject = f"[Sensor Network] {len(events)} station notifications"
+    lines = []
+    for event in events:
+        lines.append(f"{NOTIFICATION_EVENT_LABELS[event['kind']]}")
+        lines.append(f"  Station: {event['station_uuid']}")
+        if event["kind"] == "recovery":
+            lines.append(f"  Ended: {event['anomaly_type']}")
+            lines.append(f"  Failed at: {event['failed_at']}")
+            lines.append(f"  Regular since: {event['resolved_at']}")
+        else:
+            lines.append(f"  Anomaly: {event['message']}")
+            lines.append(f"  Failing since: {event['failed_at']}")
+        lines.append("")
+    if interval_min > 0:
+        lines.append(f"While a failure persists you get a reminder every {interval_min} minutes.")
+    else:
+        lines.append("You are notified of status changes only; no reminders are sent.")
+    lines.append("Acknowledge, snooze or clear your notifications, and change the notification time, here")
+    lines.append(f"(automatic login, single use, valid for {NOTIFICATION_LINK_TTL_MIN} minutes):")
+    lines.append(login_link)
+    lines.append("")
+    lines.append("After that, log in and open:")
+    lines.append(compose_external_url(cfg["base_url"], "profile") + "#notifications")
+    return subject, "\n".join(lines) + "\n"
+
+
+def send_watchdog_notifications(cfg: dict, access_store: AccessStore, failing, now: datetime):
+    """Email each user the status changes and the due reminders of this scan.
+
+    `failing` lists the anomalies seen in the scan. A user gets one email per
+    scan, and a notification is marked as sent only when its email was sent.
+    """
+    emailing = bool(cfg.get("smtp_enabled") and str(cfg.get("smtp_host", "") or "").strip())
+    outbox = {}
+    for anomaly in failing:
+        users = access_store.list_station_notification_users(anomaly["station_uuid"])
+        notifications = access_store.sync_notifications(anomaly["id"], [u["username"] for u in users], now)
+        silenced_until = access_store.get_anomaly_silenced_until(anomaly["station_uuid"], anomaly["anomaly_type"])
+        if not emailing or (silenced_until is not None and silenced_until > now):
+            continue
+        for user in users:
+            notification = notifications.get(user["username"])
+            if not user["email"] or notification is None:
+                continue
+            kind = notification_due(notification, user["interval_min"], now)
+            if kind:
+                entry = outbox.setdefault(user["username"], {"email": user["email"], "events": []})
+                entry["events"].append({**anomaly, "kind": kind, "notification_id": notification["id"]})
+    if not emailing:
+        return
+
+    for row in access_store.list_pending_recovery_notifications(now - timedelta(hours=24)):
+        entry = outbox.setdefault(row["username"], {"email": row["email"], "events": []})
+        entry["events"].append({**row, "kind": "recovery", "notification_id": row["id"]})
+
+    for username, entry in outbox.items():
+        token = access_store.create_login_token(username, ttl_minutes=NOTIFICATION_LINK_TTL_MIN)
+        login_link = compose_external_url(cfg["base_url"], "fast-login", {"token": token, "next": "notifications"})
+        subject, body = build_notification_email(
+            cfg, entry["events"], access_store.get_notification_interval(username), login_link
+        )
+        if not send_email(cfg, [entry["email"]], subject, body):
+            continue
+        for recovery in (False, True):
+            ids = [e["notification_id"] for e in entry["events"] if (e["kind"] == "recovery") == recovery]
+            if ids:
+                access_store.mark_notifications_sent(ids, now, recovery=recovery)
+
+
+def _run_watchdog_scan(cfg: dict, access_store: AccessStore, storage_root: str, now: datetime = None):
+    now = now or utc_now()
+    recovery_hold = anomaly_recovery_hold_seconds(cfg)
+    failing = []
     for instrument_uuid in collect_instruments(storage_root):
         try:
             rows = load_station_rows(storage_root, instrument_uuid, limit=500)
@@ -2785,42 +3059,29 @@ def _run_watchdog_scan(cfg: dict, access_store: AccessStore, storage_root: str):
             for alarm in summary["alarms"]:
                 anomaly_type = anomaly_base_type(alarm)
                 active_types.add(anomaly_type)
-                anomaly_id, is_new = access_store.upsert_anomaly(
+                access_store.upsert_anomaly(
                     instrument_uuid,
                     anomaly_type,
                     alarm,
                     severity="critical" if anomaly_type in ("lost_connectivity", "sensor_failure") else "warning",
+                    now=now,
                 )
-                silenced_until = access_store.get_anomaly_silenced_until(instrument_uuid, anomaly_type)
-                if is_new and (silenced_until is None or silenced_until <= now):
-                    contacts = access_store.list_station_user_contacts(instrument_uuid)
-                    for c in contacts:
-                        token = access_store.create_login_token(c["username"], ttl_minutes=60)
-                        fast_link = compose_external_url(cfg["base_url"], "fast-login", {"token": token})
-                        body = (
-                            f"Station: {instrument_uuid}\n"
-                            f"Anomaly: {alarm}\n"
-                            f"Detected at: {now_utc_iso()}\n\n"
-                            f"Open anomalies and optionally silence for up to 24h:\n"
-                            f"{compose_external_url(cfg['base_url'], 'anomalies')}\n\n"
-                            f"Fast login link (expires in 60 minutes):\n{fast_link}\n"
-                        )
-                        send_email(
-                            cfg,
-                            [c["email"]],
-                            f"[Sensor Network Alarm] {instrument_uuid} - {anomaly_type}",
-                            body,
-                        )
 
-            # Resolve anomalies that are no longer active.
+            # Resolve anomalies that have not been seen for the hold time.
             for open_anomaly in access_store.list_open_anomalies():
                 if open_anomaly["station_uuid"] != instrument_uuid:
                     continue
-                if open_anomaly["anomaly_type"] not in active_types:
-                    access_store.resolve_anomaly(instrument_uuid, open_anomaly["anomaly_type"], "resolved")
+                if open_anomaly["anomaly_type"] in active_types:
+                    failing.append({**open_anomaly, "failed_at": open_anomaly["created_at"]})
+                    continue
+                last_seen = parse_iso_ts(open_anomaly["updated_at"])
+                if last_seen is None or (now - last_seen).total_seconds() >= recovery_hold:
+                    access_store.resolve_anomaly(instrument_uuid, open_anomaly["anomaly_type"], "resolved", now=now)
         except Exception:
             # One unreadable station must not stop the others from being checked.
             logger.exception("Watchdog check failed for station=%s", instrument_uuid)
+
+    send_watchdog_notifications(cfg, access_store, failing, now)
 
 
 # ----------------------------
@@ -4507,7 +4768,7 @@ def create_web_app(cfg: dict, access_store: AccessStore):
               <h1>Sensor Network Collector - Data Portal</h1>
               {% if user %}
                 <p>Logged in as <b>{{ user.username }}</b> ({{ user.role }}) - <a href="{{ url_for('logout') }}">Logout</a></p>
-                <p><a href="{{ url_for('anomalies_log') }}">Anomalies log</a></p>
+                <p><a href="{{ url_for('profile') }}">Profile and notifications</a> | <a href="{{ url_for('anomalies_log') }}">Anomalies log</a></p>
                 {% if user.role == 'admin' %}<p><a href="{{ url_for('admin') }}">Admin panel</a></p>{% endif %}
               {% else %}
                 <p>{% if web_info_link %}<a href="{{ web_info_link }}" target="_blank" rel="noopener noreferrer">Info</a> | {% endif %}<a href="{{ url_for('login') }}">Login</a> | <a href="{{ url_for('request_account') }}">Request account</a></p>
@@ -5655,13 +5916,23 @@ def create_web_app(cfg: dict, access_store: AccessStore):
     @app.route("/fast-login")
     def fast_login():
         token = request.args.get("token", "")
+        # Destinations are named, so a link cannot redirect anywhere else.
+        target = url_for("index")
+        if request.args.get("next") == "notifications":
+            target = url_for("profile") + "#notifications"
         user = access_store.consume_login_token(token)
         if not user:
+            if target != url_for("index"):
+                # A notification link read late: the page is still one login away.
+                if current_user():
+                    return redirect(target)
+                return redirect(url_for("login", next=target, err="The login link has expired. Please log in."))
             abort(403, "Invalid or expired login token")
+        session.clear()
         session["username"] = user["username"]
         if int(user.get("force_password_change", 0)) == 1:
             return redirect(url_for("change_password"))
-        return redirect(url_for("index"))
+        return redirect(target)
 
     @app.route("/logout")
     def logout():
@@ -6132,6 +6403,7 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                 </div>
                 <div class="d-flex flex-wrap gap-2">
                   <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('index') }}">Home</a>
+                  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('profile') }}">Profile</a>
                   <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('anomalies_log') }}">Anomalies log</a>
                   <a class="btn btn-outline-primary btn-sm" href="{{ url_for('admin_dashboard') }}">Network dashboard</a>
                 </div>
@@ -6770,8 +7042,9 @@ def create_web_app(cfg: dict, access_store: AccessStore):
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
             </head>
             <body class="container py-4">
-              <p><a href="{{ url_for('index') }}">Home</a></p>
+              <p><a href="{{ url_for('index') }}">Home</a> | <a href="{{ url_for('profile') }}#notifications">My notifications</a></p>
               <h1 class="h4">Anomalies log</h1>
+              <p class="text-muted small">Silencing stops the failure and reminder emails of an anomaly for every user. To quiet only your own emails, use your notifications.</p>
               <table class="table table-sm table-bordered table-striped">
                 <thead>
                   <tr><th>Station</th><th>Type</th><th>Status</th><th>Message</th><th>Updated</th><th>Action</th></tr>
@@ -6821,6 +7094,166 @@ def create_web_app(cfg: dict, access_store: AccessStore):
             abort(403)
         access_store.set_anomaly_silence(station_uuid, anomaly_type, user["username"], hours)
         return redirect(url_for("anomalies_log"))
+
+    def profile_done(ok: bool, message: str):
+        flash(message, "success" if ok else "danger")
+        return redirect(url_for("profile") + "#notifications")
+
+    @app.route("/profile")
+    def profile():
+        user = require_login()
+        if not isinstance(user, dict):
+            return user
+
+        def shown_time(value):
+            dt = parse_iso_ts(value or "")
+            return dt.strftime("%Y-%m-%d %H:%M UTC") if dt else ""
+
+        now = utc_now()
+        notifications = []
+        for item in access_store.list_notifications_for_user(user["username"]):
+            if user.get("role") != "admin" and not station_is_accessible(user, item["station_uuid"]):
+                continue
+            is_open = item["status"] == "open"
+            snoozed_until = parse_iso_ts(item["snoozed_until"] or "")
+            if not is_open:
+                state = "Ended"
+            elif item["acknowledged_at"]:
+                state = "Acknowledged"
+            elif snoozed_until is not None and snoozed_until > now:
+                state = f"Snoozed until {shown_time(item['snoozed_until'])}"
+            else:
+                state = "Active"
+            notifications.append(
+                {
+                    "id": item["id"],
+                    "station_uuid": item["station_uuid"],
+                    "anomaly_type": item["anomaly_type"],
+                    "message": item["message"] if is_open else "",
+                    "is_open": is_open,
+                    "state": state,
+                    "can_acknowledge": is_open and not item["acknowledged_at"],
+                    "failed_at": shown_time(item["failed_at"]),
+                    "resolved_at": shown_time(item["resolved_at"]),
+                    "last_sent_at": shown_time(item["recovery_sent_at"] or item["last_sent_at"]),
+                }
+            )
+        return render_template_string(
+            """
+            <!doctype html>
+            <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <title>Profile</title>
+              <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+              <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            </head>
+            <body class="container py-4">
+              <p>
+                <a href="{{ url_for('index') }}">Home</a> |
+                <a href="{{ url_for('anomalies_log') }}">Anomalies log</a> |
+                <a href="{{ url_for('change_password') }}">Change password</a> |
+                <a href="{{ url_for('logout') }}">Logout</a>
+              </p>
+              <h1 class="h4">Profile</h1>
+              {% for category, message in get_flashed_messages(with_categories=true) %}
+                <div class="alert alert-{{ category }}">{{ message }}</div>
+              {% endfor %}
+              <dl class="row mb-4">
+                <dt class="col-sm-2">Username</dt><dd class="col-sm-10">{{ user.username }}</dd>
+                <dt class="col-sm-2">Email</dt><dd class="col-sm-10">{{ user.email or 'not set: no notification emails are sent' }}</dd>
+                <dt class="col-sm-2">Role</dt><dd class="col-sm-10">{{ user.role }}</dd>
+              </dl>
+
+              <h2 class="h5" id="notifications">Notifications</h2>
+              <p class="text-muted small">
+                You get an email when a station you can access starts failing and when it is back to regular.
+                While the failure persists, a reminder is sent at each notification time.
+              </p>
+              <form method="post" action="{{ url_for('profile_notification_interval') }}" class="row g-2 align-items-end mb-3">
+                <div class="col-auto">
+                  <label class="form-label" for="notification-minutes">Notification time</label>
+                  <select class="form-select form-select-sm" id="notification-minutes" name="minutes">
+                    {% for minutes, label in interval_choices %}
+                      <option value="{{ minutes }}" {% if minutes == interval_min %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-auto"><button class="btn btn-primary btn-sm" type="submit">Save</button></div>
+              </form>
+
+              <div class="table-responsive">
+              <table class="table table-sm table-bordered align-middle">
+                <thead>
+                  <tr><th>Status</th><th>Station</th><th>Anomaly</th><th>Failing since</th><th>Ended</th><th>Last email</th><th>State</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                {% for n in notifications %}
+                  <tr>
+                    <td>{% if n.is_open %}<span class="badge text-bg-danger">Failure</span>{% else %}<span class="badge text-bg-success">Regular</span>{% endif %}</td>
+                    <td><a href="{{ url_for('browse_station', instrument_uuid=n.station_uuid) }}">{{ n.station_uuid }}</a></td>
+                    <td>{{ n.anomaly_type }}{% if n.message %}<div class="small text-muted">{{ n.message }}</div>{% endif %}</td>
+                    <td>{{ n.failed_at }}</td>
+                    <td>{{ n.resolved_at }}</td>
+                    <td>{{ n.last_sent_at }}</td>
+                    <td>{{ n.state }}</td>
+                    <td>
+                      <form method="post" action="{{ url_for('profile_notification_action', notification_id=n.id) }}" class="d-flex flex-wrap gap-1">
+                        {% if n.can_acknowledge %}
+                          <button class="btn btn-outline-primary btn-sm" type="submit" name="action" value="acknowledge" title="Stop the reminders of this failure">Acknowledge</button>
+                        {% endif %}
+                        {% if n.is_open %}
+                          <select class="form-select form-select-sm w-auto" name="hours" aria-label="Snooze time">
+                            {% for hours in snooze_hours %}<option value="{{ hours }}">{{ hours }} h</option>{% endfor %}
+                          </select>
+                          <button class="btn btn-outline-warning btn-sm" type="submit" name="action" value="snooze" title="Pause the reminders of this failure">Snooze</button>
+                        {% endif %}
+                        <button class="btn btn-outline-secondary btn-sm" type="submit" name="action" value="clear" title="Remove from this list; no more emails about it">Clear</button>
+                      </form>
+                    </td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="8" class="text-muted">No notifications.</td></tr>
+                {% endfor %}
+                </tbody>
+              </table>
+              </div>
+            </body>
+            </html>
+            """,
+            user=user,
+            notifications=notifications,
+            interval_min=access_store.get_notification_interval(user["username"]),
+            interval_choices=NOTIFICATION_INTERVAL_CHOICES,
+            snooze_hours=NOTIFICATION_SNOOZE_HOURS,
+        )
+
+    @app.route("/profile/notification-interval", methods=["POST"])
+    def profile_notification_interval():
+        user = require_login()
+        if not isinstance(user, dict):
+            return user
+        try:
+            minutes = int(request.form.get("minutes", ""))
+        except ValueError:
+            abort(400, "minutes must be an integer")
+        return profile_done(*access_store.set_notification_interval(user["username"], minutes))
+
+    @app.route("/profile/notifications/<int:notification_id>", methods=["POST"])
+    def profile_notification_action(notification_id: int):
+        user = require_login()
+        if not isinstance(user, dict):
+            return user
+        try:
+            hours = int(request.form.get("hours", "0") or 0)
+        except ValueError:
+            abort(400, "hours must be an integer")
+        # A notification belongs to one user: only its owner can change it.
+        return profile_done(
+            *access_store.update_notification(
+                user["username"], notification_id, request.form.get("action", ""), snooze_hours=hours
+            )
+        )
 
     @app.route("/station/<path:instrument_uuid>/chart-settings", methods=["GET", "POST"])
     def station_chart_settings(instrument_uuid: str):

@@ -197,6 +197,104 @@ class WebAndAuthTests(unittest.TestCase):
             main._run_watchdog_scan(self.cfg, self.store, self.cfg["storage_root"])
         self.assertEqual(calls, ["other", "station"])
 
+    def scan_with_mail(self, at):
+        """Run one watchdog scan at the given time; returns the (recipient, subject, body) sent."""
+        sent = []
+
+        def fake_send(cfg, recipients, subject, body):
+            sent.append((recipients[0], subject, body))
+            return True
+
+        cfg = dict(self.cfg, smtp_enabled=True, smtp_host="smtp.example.org")
+        with patch("main.send_email", fake_send):
+            main._run_watchdog_scan(cfg, self.store, self.cfg["storage_root"], now=at)
+        return sent
+
+    def test_failure_is_notified_on_status_change_and_at_notification_time(self):
+        minute = timedelta(minutes=1)
+        start = self.now + timedelta(hours=1)
+        self.assertEqual(self.scan_with_mail(self.now), [])
+
+        sent = self.scan_with_mail(start)
+        self.assertEqual([m[0] for m in sent], ["bob@example.org"])
+        self.assertIn("FAILURE: station - lost_connectivity", sent[0][1])
+        # The following checks of the same failure stay silent until the notification time.
+        self.assertEqual(self.scan_with_mail(start + minute), [])
+        self.assertEqual(self.scan_with_mail(start + 59 * minute), [])
+        sent = self.scan_with_mail(start + 60 * minute)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("STILL FAILING", sent[0][1])
+
+        # A shorter notification time chosen by the user is honoured.
+        self.assertTrue(self.store.set_notification_interval("bob", 15)[0])
+        self.assertEqual(self.scan_with_mail(start + 74 * minute), [])
+        self.assertEqual(len(self.scan_with_mail(start + 75 * minute)), 1)
+
+        # Data is back: the recovery is notified once, after the hold time.
+        back = start + 80 * minute
+        self.assertEqual(self.scan_with_mail(back - minute), [])
+        for offset in (0, 1, 2, 3, 4, 5, 6):
+            when = back + offset * minute
+            self.write_row("station", when, {
+                "timestamp": when.isoformat().replace("+00:00", "Z"), "uuid": "station",
+                "TempOut": 20, XSS_FIELD: 1,
+            })
+        self.assertEqual(self.scan_with_mail(back), [])
+        sent = self.scan_with_mail(back + 6 * minute)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("BACK TO REGULAR", sent[0][1])
+        self.assertEqual(self.scan_with_mail(back + 7 * minute), [])
+
+    def test_notification_actions_stop_reminders(self):
+        hour = timedelta(hours=1)
+        start = self.now + hour
+        self.store.update_user("admin", email="admin@example.org")
+        self.assertEqual(len(self.scan_with_mail(start)), 2)
+        bob, admin = self.client("bob"), self.client("admin")
+        own = self.store.list_notifications_for_user("bob")[0]["id"]
+        other = self.store.list_notifications_for_user("admin")[0]["id"]
+
+        page = bob.get("/profile")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"lost_connectivity", page.data)
+        self.assertIn(b'<option value="60" selected>', page.data)
+        self.assertEqual(self.client().get("/profile").status_code, 302)
+
+        # Another user's notification cannot be changed.
+        bob.post(f"/profile/notifications/{other}", data={"action": "clear"})
+        self.assertEqual(len(self.store.list_notifications_for_user("admin")), 1)
+
+        bob.post(f"/profile/notifications/{own}", data={"action": "snooze", "hours": "4"})
+        admin.post(f"/profile/notifications/{other}", data={"action": "acknowledge"})
+        self.assertEqual(self.scan_with_mail(start + 2 * hour), [])
+        # The snooze ends, the acknowledgement does not.
+        self.assertEqual([m[0] for m in self.scan_with_mail(start + 5 * hour)], ["bob@example.org"])
+
+        bob.post("/profile/notification-interval", data={"minutes": "0"})
+        self.assertEqual(self.store.get_notification_interval("bob"), 0)
+        self.assertEqual(self.scan_with_mail(start + 30 * hour), [])
+        self.assertEqual(bob.post("/profile/notification-interval", data={"minutes": "7"}).status_code, 302)
+        self.assertEqual(self.store.get_notification_interval("bob"), 0)
+
+        bob.post(f"/profile/notifications/{own}", data={"action": "clear"})
+        self.assertEqual(self.store.list_notifications_for_user("bob"), [])
+        self.assertNotIn(b"lost_connectivity", bob.get("/profile").data)
+
+    def test_notification_email_logs_in_to_the_profile_page(self):
+        sent = self.scan_with_mail(self.now + timedelta(hours=1))
+        link = next(line for line in sent[0][2].splitlines() if "/fast-login?" in line)
+        self.assertTrue(link.startswith("https://collector.example.org/fast-login?token="))
+        path = link[len("https://collector.example.org"):]
+
+        client = self.client()
+        response = client.get(path)
+        self.assertEqual(response.headers["Location"], "/profile#notifications")
+        self.assertIn(b"bob", client.get("/profile").data)
+        # The link is single use: afterwards it leads to the page through the login form.
+        response = self.client().get(path)
+        self.assertTrue(response.headers["Location"].startswith("/login?next=/profile%23notifications"))
+        self.assertEqual(self.client().get("/fast-login?token=bad&next=https://evil.example").status_code, 403)
+
     def test_login_redirects_only_to_local_paths(self):
         client = self.app.test_client()
         for target in ("https://example.com", "//example.com", "/\\example.com", "/\t/example.com"):

@@ -17,7 +17,8 @@ project only reads that data and serves it. It never connects to MQTT.
 - Data download (ZIP) with authentication and per-station access policies
 - Accounts: admin approval of requests, forced/self-service password change, reset by email
 - Administration page with per-user and per-station rights tables, roles, and account enable/disable
-- Watchdog anomaly detection with a persisted anomaly log and email alarms with fast-login links
+- Watchdog anomaly detection with a persisted anomaly log and email notifications of status changes (failure, back to regular), with reminders at a per-user notification time
+- Profile page where each user sets the notification time and acknowledges, snoozes, or clears notifications
 - Web app logo and per-station logo upload
 - Optional InfluxDB v2 reads that complement the CSV files on the public dashboards
 

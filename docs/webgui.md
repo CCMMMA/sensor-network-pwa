@@ -26,7 +26,7 @@ Set (see [configuration](configuration.md)):
 - `/request-account`
 - `/request-account/complete?token=...`
 - `/change-password`
-- `/fast-login?token=...`
+- `/fast-login?token=...` single-use login link; with `next=notifications` it continues to `/profile#notifications`
 - `/station/<uuid>` station data page: chart, table, statistics, downloads
 - `/station/<uuid>/export.csv` CSV of the selected time range
 - `/station/<uuid>/chart-settings` station trend-chart Y-axis settings
@@ -41,6 +41,8 @@ Set (see [configuration](configuration.md)):
 - `/admin` admin console
 - `/admin/dashboard` admin-only network dashboard
 - `/anomalies` anomaly log and silence actions
+- `/profile` user profile: notification time and the user's notifications
+- `/profile/notification-interval`, `/profile/notifications/<id>` (`POST`) profile actions
 
 ## Progressive web app
 
@@ -296,7 +298,7 @@ With SMTP enabled:
 - welcome email when admin creates user
 - account approval email with onboarding link when request is approved
 - password-reset email from forgot-password flow
-- anomaly warning emails to admins and station-related users
+- station failure, reminder, and recovery emails to admins and station-related users (see [Failure notifications](#failure-notifications))
 
 SMTP fallback behavior:
 
@@ -344,7 +346,36 @@ Behavior details:
 - anomalies are persisted in auth SQLite DB
 - admins see full log
 - non-admin users see only stations they can access
-- users can silence specific anomalies for 1..24 hours
+- users can silence specific anomalies for 1..24 hours; this stops the failure and
+  reminder emails of that anomaly for every user
+- an anomaly is closed when the watchdog has not seen it for 5 minutes (or three scan
+  periods, if longer), so a condition that comes and goes between scans stays one anomaly
+
+## Failure notifications
+
+The watchdog emails the admins and the users a station's policy admits (`account`: every
+user, `restricted`: the assigned users). Emails are sent:
+
+- when a station goes from regular to failure (a new anomaly)
+- when it goes from failure back to regular, to the users who were told of the failure
+- while the failure persists, as a reminder at each *notification time* of the user
+
+Checks in between send nothing. All the events owed to a user in one scan go into one
+email. Each email carries a single-use link, valid for 60 minutes, that logs the user in
+and opens `/profile#notifications`; a link opened later leads there through the login
+form.
+
+On `/profile` every user:
+
+- chooses the notification time from a drop-down list: status changes only (no
+  reminders), 15 or 30 minutes, 1, 2, 3, 6, 12, or 24 hours. The default is 60 minutes
+- sees the list of their notifications and, for each one, can:
+  - **Acknowledge**: no more reminders for that failure; the recovery is still notified
+  - **Snooze** (1, 4, 8, or 24 hours): reminders pause and then resume
+  - **Clear**: remove it from the list; no more emails about it
+
+These actions affect only the user's own emails. A user without an email address still
+gets the list. If an email cannot be sent, it is retried at the next scan.
 
 ## Branding and logos
 
@@ -418,6 +449,7 @@ The auth database now stores:
 - per-user station chart-control rights
 - login and password-reset tokens
 - anomalies and anomaly silence windows
+- per-user notification time and notifications
 - station logos
 - per-station public chart settings
 

@@ -40,8 +40,9 @@ rollback does not roll back the SQLite schema.
 | Sessions disappear after restart or between hosts | Configure the same `webSessionSecret` in all web processes. Without it the secret is stored in the auth DB, so processes using different `authDbPath` files do not share sessions. |
 | Every page redirects to `/change-password` | The account is flagged for a password change (sample admin password, or forced by an admin); it is lifted once a strong password is saved. |
 | `logLevel` seems ignored | It is applied by both `main.py` and `webapp_wsgi.py`; a `logLevel` key in the config file takes precedence over the `LOG_LEVEL` environment variable. |
-| No watchdog notifications | Check that one watchdog process runs, `pathStorage`, SMTP settings, and alarm silencing. A failed scan is logged as `Watchdog scan failed` or `Watchdog check failed for station=...` and retried at the next interval. |
+| No watchdog notifications | Check that one watchdog process runs, `pathStorage`, SMTP settings, the user's email address, alarm silencing, and whether the user acknowledged, snoozed, or cleared the notification on `/profile`. A failed scan is logged as `Watchdog scan failed` or `Watchdog check failed for station=...` and retried at the next interval. |
 | Duplicate alarm emails | More than one watchdog process is running. |
+| Too many or too few reminder emails | Each user sets the notification time on `/profile` (default 60 minutes). |
 | Forms return `403 Cross-site request rejected` | The browser's origin host differs from the request host, forwarded host, and `baseUrl` host. Set `baseUrl` to the URL users open and forward `Host`/`X-Forwarded-Host` from the proxy. |
 | Admin is sent to `/change-password` at first login | The account was created with the default or a sample `adminPassword`; choose a strong password. |
 | Dashboards are slow | Check the storage latency of `pathStorage` and that files follow `<station>/YYYY/MM/DD/<station>_YYYYMMDDZHH00.csv`; files elsewhere are found but cannot be skipped by date. With InfluxDB enabled, check its query time (`Influx query failed` warnings). |

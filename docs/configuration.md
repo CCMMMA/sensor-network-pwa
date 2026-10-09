@@ -95,6 +95,10 @@ Behavior:
 
 - `watchdogIntervalSec`: scan period for anomaly detection (minimum 10, default 60)
 
+The scan period is not the email period: emails are sent on status changes and at each
+user's notification time (default 60 minutes, set on `/profile`). See
+[Failure notifications](webgui.md#failure-notifications).
+
 The watchdog runs inside `python main.py`, or alone with `--watchdog-only`. Gunicorn
 workers do not run it.
 
