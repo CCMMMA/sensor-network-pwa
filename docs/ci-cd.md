@@ -6,7 +6,8 @@
 - **Lint, format and types** (Python 3.12): `ruff check`, `ruff format --check` and `mypy`,
   with the tools from `requirements-dev.txt` and the settings in `pyproject.toml`.
 - **Python 3.10–3.14**: install `requirements.txt`, `pip check`, compile, run the unittest suite.
-- **Container**, after both pass: build the Docker image, check `python main.py --help`, run the
+- **Container**, after both pass: fetch the base image (retrying, then from `mirror.gcr.io`, because
+  Docker Hub rate-limits shared runners), build the Docker image, check `python main.py --help`, run the
   tests inside the image, then start it with Gunicorn and fetch the home, login and offline
   pages, the manifest, the service worker and a static script.
 - A successful push publishes the tested image:

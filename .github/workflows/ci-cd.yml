@@ -74,6 +74,19 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Fetch base image
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Anonymous Docker Hub pulls from shared runners are rate limited (HTTP 429):
+          # retry, then fall back to Google's mirror of Docker Hub.
+          base="$(awk '$1 == "FROM" { print $2; exit }' Dockerfile)"
+          for attempt in 1 2 3; do
+            if docker pull "$base"; then exit 0; fi
+            sleep $((attempt * 10))
+          done
+          docker pull "mirror.gcr.io/library/${base}"
+          docker tag "mirror.gcr.io/library/${base}" "$base"
       - name: Build image
         run: >-
           docker build
