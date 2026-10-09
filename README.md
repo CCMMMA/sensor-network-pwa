@@ -15,6 +15,7 @@ project only reads that data and serves it. It never connects to MQTT.
 - Public station dashboard with per-station trend-chart axis settings (JSON export/import)
 - Data download (ZIP) with authentication and per-station access policies
 - Accounts: admin approval of requests, forced/self-service password change, reset by email
+- Administration page with per-user and per-station rights tables, roles, and account enable/disable
 - Watchdog anomaly detection with a persisted anomaly log and email alarms with fast-login links
 - Web app logo and per-station logo upload
 - Optional InfluxDB v2 reads that complement the CSV files on the public dashboards

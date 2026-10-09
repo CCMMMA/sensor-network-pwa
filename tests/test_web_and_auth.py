@@ -379,6 +379,74 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertEqual((cards["temperature"], cards["humidity"], cards["pm10"]), (19, 70, 4))
         self.assertIsNone(cards["pressure"])
 
+    def test_admin_page_manages_users_and_station_rights(self):
+        admin = self.client("admin")
+        body = admin.get("/admin").get_data(as_text=True)
+        for text in ("Station rights", "Save station rights", "Account requests", "bob@example.org"):
+            self.assertIn(text, body)
+
+        response = admin.post("/admin/create-user", data={
+            "username": "erin", "email": "erin@example.org", "password": STRONG, "force_password_change": "1"})
+        self.assertEqual(response.headers["Location"], "/admin#users")
+        self.assertEqual(self.store.get_user("erin")["force_password_change"], 1)
+        self.assertIn("User erin created", admin.get("/admin").get_data(as_text=True))
+        admin.post("/admin/create-user", data={"username": "weak", "password": "short"})
+        self.assertIsNone(self.store.get_user("weak"))
+        self.assertIn("Password must be at least 12 characters long", admin.get("/admin").get_data(as_text=True))
+
+        self.store.set_policy("station", "restricted", "admin")
+        admin.post("/admin/user-permissions", data={
+            "username": "bob", "station": ["station", "ghost"], "access": ["station"], "control": ["station"]})
+        self.assertEqual(self.store.get_user_instruments("bob"), ["station"])
+        self.assertEqual(self.store.get_user_control_stations("bob"), ["station"])
+        # Only the listed stations are touched, and unticked rights are removed.
+        self.store.set_user_instrument_access("bob", "elsewhere", True)
+        admin.post("/admin/user-permissions", data={"username": "bob", "station": ["station"]})
+        self.assertEqual(self.store.get_user_instruments("bob"), ["elsewhere"])
+        self.assertEqual(self.store.get_user_control_stations("bob"), [])
+
+        admin.post("/admin/station-permissions", data={
+            "station_uuid": "station", "user": ["bob", "erin", "nobody"], "access": ["erin"], "control": ["bob"]})
+        self.assertEqual(self.store.get_user_instruments("erin"), ["station"])
+        self.assertEqual(self.store.get_user_control_stations("bob"), ["station"])
+        self.assertNotIn("station", self.store.get_user_instruments("bob"))
+        self.assertEqual(self.client("bob").post("/admin/station-permissions", data={"station_uuid": "x"}).status_code, 403)
+
+    def test_admin_account_actions_protect_the_last_admin(self):
+        admin = self.client("admin")
+
+        def act(username, action, **extra):
+            admin.post("/admin/user-update", data={"username": username, "action": action, **extra})
+            return self.store.get_user(username)
+
+        self.assertEqual(act("bob", "email", email="new@example.org")["email"], "new@example.org")
+        self.assertEqual(act("bob", "email", email="not-an-email")["email"], "new@example.org")
+        self.assertEqual(act("bob", "deactivate")["active"], 0)
+        self.assertIsNone(self.store.authenticate("bob", STRONG))
+        self.assertEqual(act("bob", "activate")["active"], 1)
+        self.assertEqual(act("admin", "make_user")["role"], "admin")
+        self.assertEqual(act("admin", "deactivate")["active"], 1)
+        self.assertEqual(self.store.update_user("admin", active=False)[0], False)
+        self.assertEqual(act("bob", "make_admin")["role"], "admin")
+        # With a second administrator the first one can be demoted, and restored.
+        self.assertEqual(self.store.update_user("admin", role="user")[0], True)
+        self.assertEqual(self.store.update_user("admin", role="admin")[0], True)
+        admin.post("/admin/force-password", data={"username": "bob"})
+        self.assertEqual(self.store.get_user("bob")["force_password_change"], 1)
+        admin.post("/admin/force-password", data={"username": "bob", "force": "0"})
+        self.assertEqual(self.store.get_user("bob")["force_password_change"], 0)
+
+    def test_approval_without_email_shows_the_onboarding_link(self):
+        self.store.create_account_request("new@example.org", "please")
+        request_id = self.store.list_account_requests("pending")[0]["id"]
+        admin = self.client("admin")
+        response = admin.post(f"/admin/requests/{request_id}/approve")
+        self.assertEqual(response.headers["Location"], "/admin#requests")
+        body = admin.get("/admin").get_data(as_text=True)
+        self.assertIn("https://collector.example.org/request-account/complete?token=", body)
+        token = body.split("complete?token=")[1].split("<")[0].strip()
+        self.assertEqual(self.store.complete_account_request(token, "newuser", STRONG), (True, "Account created"))
+
     def test_config_needs_no_collector_settings(self):
         self.assertFalse(self.cfg["enable_influx"])
         self.assertTrue(self.cfg["auth_db_path"].endswith("collector_auth.sqlite"))

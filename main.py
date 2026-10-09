@@ -27,7 +27,7 @@ from email.message import EmailMessage
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
-from flask import Flask, abort, jsonify, redirect, render_template_string, request, send_file, session, url_for
+from flask import Flask, abort, flash, jsonify, redirect, render_template_string, request, send_file, session, url_for
 from influxdb_client import InfluxDBClient
 from markupsafe import escape
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -838,6 +838,102 @@ class AccessStore:
             allowed = set(self.get_user_instruments(user["username"]))
             return instrument_uuid in allowed
         return False
+
+    def list_all_user_instruments(self):
+        """{username: [instrument_uuid, ...]} for every user with an assignment."""
+        out = {}
+        with self._connect() as con:
+            for row in con.execute("SELECT username,instrument_uuid FROM user_instruments ORDER BY instrument_uuid"):
+                out.setdefault(row["username"], []).append(row["instrument_uuid"])
+        return out
+
+    def list_all_user_station_controls(self):
+        """{username: [station_uuid, ...]} for every user with chart-control rights."""
+        out = {}
+        with self._connect() as con:
+            for row in con.execute("SELECT username,station_uuid FROM user_station_controls ORDER BY station_uuid"):
+                out.setdefault(row["username"], []).append(row["station_uuid"])
+        return out
+
+    def replace_user_permissions(self, username: str, stations, access, control):
+        """Set one user's data access and chart control for the listed stations only."""
+        username = username.strip()
+        stations = [str(s).strip() for s in stations if str(s).strip()]
+        access, control = set(access), set(control)
+        with self._lock:
+            with self._connect() as con:
+                if not con.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+                    return False, "User not found"
+                for station in stations:
+                    con.execute(
+                        "DELETE FROM user_instruments WHERE username = ? AND instrument_uuid = ?", (username, station)
+                    )
+                    con.execute(
+                        "DELETE FROM user_station_controls WHERE username = ? AND station_uuid = ?", (username, station)
+                    )
+                    if station in access:
+                        con.execute("INSERT INTO user_instruments(username,instrument_uuid) VALUES(?,?)", (username, station))
+                    if station in control:
+                        con.execute(
+                            "INSERT INTO user_station_controls(username,station_uuid) VALUES(?,?)", (username, station)
+                        )
+        return True, f"Station rights of {username} saved"
+
+    def replace_station_permissions(self, station_uuid: str, usernames, access, control):
+        """Set one station's data access and chart control for the listed users only."""
+        station_uuid = station_uuid.strip()
+        if not station_uuid:
+            return False, "Station UUID is required"
+        access, control = set(access), set(control)
+        with self._lock:
+            with self._connect() as con:
+                known = {row["username"] for row in con.execute("SELECT username FROM users")}
+                for username in usernames:
+                    if username not in known:
+                        continue
+                    con.execute(
+                        "DELETE FROM user_instruments WHERE username = ? AND instrument_uuid = ?", (username, station_uuid)
+                    )
+                    con.execute(
+                        "DELETE FROM user_station_controls WHERE username = ? AND station_uuid = ?",
+                        (username, station_uuid),
+                    )
+                    if username in access:
+                        con.execute(
+                            "INSERT INTO user_instruments(username,instrument_uuid) VALUES(?,?)", (username, station_uuid)
+                        )
+                    if username in control:
+                        con.execute(
+                            "INSERT INTO user_station_controls(username,station_uuid) VALUES(?,?)",
+                            (username, station_uuid),
+                        )
+        return True, f"User rights for {station_uuid} saved"
+
+    def update_user(self, username: str, email=None, role=None, active=None):
+        """Change a user's email, role or active flag; the last active admin is protected."""
+        username = username.strip()
+        with self._lock:
+            with self._connect() as con:
+                row = con.execute("SELECT role,active FROM users WHERE username = ?", (username,)).fetchone()
+                if row is None:
+                    return False, "User not found"
+                new_role = row["role"] if role is None else ("admin" if role == "admin" else "user")
+                new_active = int(row["active"]) if active is None else (1 if active else 0)
+                was_admin = row["role"] == "admin" and int(row["active"]) == 1
+                if was_admin and not (new_role == "admin" and new_active == 1):
+                    others = con.execute(
+                        "SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1 AND username <> ?",
+                        (username,),
+                    ).fetchone()["n"]
+                    if others == 0:
+                        return False, "At least one active administrator is required"
+                if email is not None:
+                    email = email.strip()
+                    if email and not is_valid_email(email):
+                        return False, "Email address is not valid"
+                    con.execute("UPDATE users SET email = ? WHERE username = ?", (email, username))
+                con.execute("UPDATE users SET role = ?, active = ? WHERE username = ?", (new_role, new_active, username))
+        return True, f"User {username} updated"
 
     def set_force_password_change(self, username: str, force: bool):
         with self._lock:
@@ -5752,9 +5848,27 @@ def create_web_app(cfg: dict, access_store: AccessStore):
         policies = access_store.list_policies(instruments)
         users = access_store.list_users()
         pending_requests = access_store.list_account_requests(status="pending")
+        all_access = access_store.list_all_user_instruments()
+        all_controls = access_store.list_all_user_station_controls()
 
-        user_access = {u["username"]: access_store.get_user_instruments(u["username"]) for u in users}
-        user_controls = {u["username"]: access_store.get_user_control_stations(u["username"]) for u in users}
+        for u in users:
+            u["access"] = set(all_access.get(u["username"], []))
+            u["controls"] = set(all_controls.get(u["username"], []))
+        regular_users = [u for u in users if u["role"] != "admin"]
+
+        stations = []
+        for inst in instruments:
+            preview = get_station_preview(storage_root, inst)
+            stations.append(
+                {
+                    "uuid": inst,
+                    "name": preview["name"],
+                    "last_timestamp": preview["last_timestamp"],
+                    "policy": policies.get(inst, "account"),
+                    "access_count": sum(1 for u in regular_users if inst in u["access"]),
+                    "control_count": sum(1 for u in regular_users if inst in u["controls"]),
+                }
+            )
 
         return render_template_string(
             """
@@ -5762,108 +5876,422 @@ def create_web_app(cfg: dict, access_store: AccessStore):
             <html lang="en">
             <head>
               <meta charset="utf-8">
-              <title>Admin panel</title>
+              <title>Administration</title>
               <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
               <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+              <style>
+                .uuid { font-family: var(--bs-font-monospace); font-size: .8rem; }
+                .manage-row > td { background: var(--bs-light); }
+                .rights-table td, .rights-table th { vertical-align: middle; }
+                .flash-text { overflow-wrap: anywhere; }
+              </style>
             </head>
-            <body class="container py-4">
-            <h1 class="h3">Admin panel</h1>
-            <p>Logged in as {{ admin_user.username }} - <a href="{{ url_for('index') }}">Home</a></p>
-            <p><a class="btn btn-outline-primary btn-sm" href="{{ url_for('admin_dashboard') }}">Sensor Network Dashboard</a></p>
-
-            <div class="card mb-3"><div class="card-body">
-            <h2 class="h5">Create user</h2>
-            <form method="post" action="{{ url_for('admin_create_user') }}" class="row g-2">
-              <div class="col-md-3"><input class="form-control" name="username" placeholder="Username"></div>
-              <div class="col-md-3"><input class="form-control" name="email" placeholder="Email"></div>
-              <div class="col-md-3"><input class="form-control" name="password" type="password" placeholder="Password"></div>
-              <div class="col-md-2">
-                <select class="form-select" name="role">
-                  <option value="user">user</option>
-                  <option value="admin">admin</option>
-                </select>
+            <body class="bg-light">
+            <div class="container py-4">
+              <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                <div>
+                  <h1 class="h3 mb-0">Administration</h1>
+                  <div class="text-muted small">Signed in as <b>{{ admin_user.username }}</b></div>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('index') }}">Home</a>
+                  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('anomalies_log') }}">Anomalies log</a>
+                  <a class="btn btn-outline-primary btn-sm" href="{{ url_for('admin_dashboard') }}">Network dashboard</a>
+                </div>
               </div>
-              <div class="col-md-1"><button class="btn btn-primary w-100" type="submit">Create</button></div>
-            </form>
-            </div></div>
 
-            <h2 class="h5">Pending account requests</h2>
-            {% if pending_requests %}
-              {% for r in pending_requests %}
-                <div class="card mb-2"><div class="card-body">
-                  <b>#{{ r.id }}</b> {{ r.email }}<br/>
-                  <span class="text-muted">Reason:</span> {{ r.message or '-' }}<br/>
-                  <span class="text-muted">Created:</span> {{ r.created_at }}<br/>
-                  <form method="post" action="{{ url_for('admin_approve_request', request_id=r.id) }}" style="display:inline;">
-                    <button class="btn btn-success btn-sm" type="submit">Approve</button>
-                  </form>
-                  <form method="post" action="{{ url_for('admin_reject_request', request_id=r.id) }}" style="display:inline;">
-                    <button class="btn btn-danger btn-sm" type="submit">Reject</button>
-                  </form>
-                </div></div>
+              {% for category, message in get_flashed_messages(with_categories=true) %}
+                <div class="alert alert-{{ category }} flash-text" role="alert">{{ message }}</div>
               {% endfor %}
-            {% else %}
-              <p>No pending requests.</p>
-            {% endif %}
 
-            <h2 class="h5 mt-4">Instrument policies</h2>
-            {% if instruments %}
-              {% for inst in instruments %}
-                <form method="post" action="{{ url_for('admin_set_policy') }}" class="row g-2 align-items-center mb-2">
-                  <input type="hidden" name="instrument_uuid" value="{{ inst }}">
-                  <div class="col-md-4"><b>{{ inst }}</b></div>
-                  <div class="col-md-5"><select class="form-select" name="policy">
-                    <option value="open" {% if policies[inst]=='open' %}selected{% endif %}>open (free download)</option>
-                    <option value="account" {% if policies[inst]=='account' %}selected{% endif %}>account (authenticated users)</option>
-                    <option value="restricted" {% if policies[inst]=='restricted' %}selected{% endif %}>restricted (assigned users only)</option>
-                  </select></div>
-                  <div class="col-md-2"><button class="btn btn-primary btn-sm" type="submit">Save</button></div>
-                  <div class="col-md-1"><a class="btn btn-outline-secondary btn-sm" href="{{ url_for('station_chart_settings', instrument_uuid=inst) }}">Charts</a></div>
-                </form>
-              {% endfor %}
-            {% else %}
-              <p>No instruments found in storage.</p>
-            {% endif %}
+              <div class="row g-2 mb-3">
+                <div class="col-4"><div class="card shadow-sm"><div class="card-body py-2">
+                  <div class="text-muted small">Users</div>
+                  <div class="h4 mb-0">{{ users|length }}</div>
+                </div></div></div>
+                <div class="col-4"><div class="card shadow-sm"><div class="card-body py-2">
+                  <div class="text-muted small">Stations</div>
+                  <div class="h4 mb-0">{{ stations|length }}</div>
+                </div></div></div>
+                <div class="col-4"><div class="card shadow-sm {% if pending_requests %}border-warning{% endif %}"><div class="card-body py-2">
+                  <div class="text-muted small">Pending requests</div>
+                  <div class="h4 mb-0">{{ pending_requests|length }}</div>
+                </div></div></div>
+              </div>
 
-            <h2 class="h5 mt-4">User access (for restricted policy)</h2>
-            {% for u in users %}
-              <div class="card mb-2"><div class="card-body">
-                <b>{{ u.username }}</b> role={{ u.role }} active={{ u.active }}<br/>
-                currently allowed: {{ user_access[u.username] }} | force_password_change={{ u.force_password_change }}
-                <br/>chart control rights: {{ user_controls[u.username] }}
-                <form method="post" action="{{ url_for('admin_set_user_access') }}" class="row g-2 mt-1">
-                  <input type="hidden" name="username" value="{{ u.username }}">
-                  <div class="col-md-5"><input class="form-control" name="instrument_uuid" placeholder="Instrument UUID"></div>
-                  <div class="col-md-3"><select class="form-select" name="allow">
-                    <option value="1">allow</option>
-                    <option value="0">revoke</option>
-                  </select></div>
-                  <div class="col-md-2"><button class="btn btn-secondary btn-sm" type="submit">Apply</button></div>
-                </form>
-                <form method="post" action="{{ url_for('admin_set_user_control') }}" class="row g-2 mt-1">
-                  <input type="hidden" name="username" value="{{ u.username }}">
-                  <div class="col-md-5"><input class="form-control" name="station_uuid" placeholder="Station UUID for chart control"></div>
-                  <div class="col-md-3"><select class="form-select" name="allow">
-                    <option value="1">grant control</option>
-                    <option value="0">revoke control</option>
-                  </select></div>
-                  <div class="col-md-2"><button class="btn btn-outline-secondary btn-sm" type="submit">Apply</button></div>
-                </form>
-                <form method="post" action="{{ url_for('admin_force_password') }}" class="mt-1">
-                  <input type="hidden" name="username" value="{{ u.username }}">
-                  <button class="btn btn-warning btn-sm" type="submit">Force password change</button>
-                </form>
-              </div></div>
-            {% endfor %}
+              <ul class="nav nav-tabs" id="adminTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                  <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#users" type="button" role="tab">Users</button>
+                </li>
+                <li class="nav-item" role="presentation">
+                  <button class="nav-link" data-bs-toggle="tab" data-bs-target="#stations" type="button" role="tab">Stations</button>
+                </li>
+                <li class="nav-item" role="presentation">
+                  <button class="nav-link" data-bs-toggle="tab" data-bs-target="#requests" type="button" role="tab">
+                    Account requests
+                    {% if pending_requests %}<span class="badge text-bg-warning">{{ pending_requests|length }}</span>{% endif %}
+                  </button>
+                </li>
+              </ul>
+
+              <div class="tab-content bg-white border border-top-0 rounded-bottom p-3 shadow-sm">
+
+                {# ------------------------------ Users ------------------------------ #}
+                <div class="tab-pane fade show active" id="users" role="tabpanel">
+                  <div class="d-flex flex-wrap gap-2 mb-3">
+                    <input id="userSearch" class="form-control" style="max-width: 20rem;" type="search" placeholder="Search by name or email" aria-label="Search users">
+                    <button class="btn btn-primary ms-auto" type="button" data-bs-toggle="collapse" data-bs-target="#newUser">New user</button>
+                  </div>
+
+                  <div class="collapse mb-3" id="newUser">
+                    <form method="post" action="{{ url_for('admin_create_user') }}" class="card card-body">
+                      <h2 class="h6">New user</h2>
+                      <div class="row g-3">
+                        <div class="col-md-6 col-lg-3">
+                          <label class="form-label" for="newUsername">Username</label>
+                          <input class="form-control" id="newUsername" name="username" required autocomplete="off">
+                        </div>
+                        <div class="col-md-6 col-lg-3">
+                          <label class="form-label" for="newEmail">Email <span class="text-muted">(optional)</span></label>
+                          <input class="form-control" id="newEmail" name="email" type="email" autocomplete="off">
+                          <div class="form-text">Used for the welcome link, alarms and password reset.</div>
+                        </div>
+                        <div class="col-md-6 col-lg-3">
+                          <label class="form-label" for="newPassword">Password</label>
+                          <input class="form-control" id="newPassword" name="password" type="password" required minlength="12" autocomplete="new-password">
+                          <div class="form-text">At least 12 characters with upper and lower case, a digit and a symbol.</div>
+                        </div>
+                        <div class="col-md-6 col-lg-3">
+                          <label class="form-label" for="newRole">Role</label>
+                          <select class="form-select" id="newRole" name="role">
+                            <option value="user">User</option>
+                            <option value="admin">Administrator</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="form-check mt-3">
+                        <input class="form-check-input" type="checkbox" id="newForce" name="force_password_change" value="1" checked>
+                        <label class="form-check-label" for="newForce">Ask for a new password at the first login</label>
+                      </div>
+                      <div class="mt-3"><button class="btn btn-primary" type="submit">Create user</button></div>
+                    </form>
+                  </div>
+
+                  <div class="table-responsive">
+                  <table class="table align-middle mb-0" id="userTable">
+                    <thead><tr><th>User</th><th>Role</th><th>Status</th><th>Station rights</th><th></th></tr></thead>
+                    <tbody>
+                    {% for u in users %}
+                      <tr class="user-row" data-search="{{ (u.username ~ ' ' ~ (u.email or ''))|lower }}">
+                        <td>
+                          <div class="fw-semibold">{{ u.username }}{% if u.username == admin_user.username %} <span class="text-muted fw-normal">(you)</span>{% endif %}</div>
+                          <div class="small text-muted">{{ u.email or 'no email' }}</div>
+                        </td>
+                        <td>
+                          {% if u.role == 'admin' %}<span class="badge text-bg-primary">Administrator</span>
+                          {% else %}<span class="badge text-bg-secondary">User</span>{% endif %}
+                        </td>
+                        <td>
+                          {% if u.active %}<span class="badge text-bg-success">Active</span>
+                          {% else %}<span class="badge text-bg-danger">Disabled</span>{% endif %}
+                          {% if u.force_password_change %}<span class="badge text-bg-warning">Must change password</span>{% endif %}
+                        </td>
+                        <td class="small">
+                          {% if u.role == 'admin' %}All stations
+                          {% else %}
+                            Data on {{ u.access|length }} restricted · Charts on {{ u.controls|length }}
+                          {% endif %}
+                        </td>
+                        <td class="text-end">
+                          <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#user-{{ loop.index }}">Manage</button>
+                        </td>
+                      </tr>
+                      <tr class="manage-row user-row" data-search="{{ (u.username ~ ' ' ~ (u.email or ''))|lower }}">
+                        <td colspan="5" class="p-0 border-0">
+                          <div class="collapse" id="user-{{ loop.index }}">
+                            <div class="row g-3 p-3">
+                              <div class="col-lg-7">
+                                <h3 class="h6">Station rights</h3>
+                                {% if u.role == 'admin' %}
+                                  <p class="text-muted mb-0">Administrators can read, download and configure every station.</p>
+                                {% elif not stations %}
+                                  <p class="text-muted mb-0">No stations found in storage.</p>
+                                {% else %}
+                                  <form method="post" action="{{ url_for('admin_set_user_permissions') }}">
+                                    <input type="hidden" name="username" value="{{ u.username }}">
+                                    <table class="table table-sm rights-table bg-white border">
+                                      <thead><tr>
+                                        <th>Station</th>
+                                        <th class="text-center" title="Browse and download the station data">Data access</th>
+                                        <th class="text-center" title="Edit the trend-chart axis settings of the public dashboard">Chart settings</th>
+                                      </tr></thead>
+                                      <tbody>
+                                      {% for st in stations %}
+                                        <tr>
+                                          <td>
+                                            <input type="hidden" name="station" value="{{ st.uuid }}">
+                                            {{ st.name }}
+                                            {% if st.name != st.uuid %}<div class="uuid text-muted">{{ st.uuid }}</div>{% endif %}
+                                          </td>
+                                          <td class="text-center">
+                                            {% if st.policy == 'restricted' %}
+                                              <input class="form-check-input" type="checkbox" name="access" value="{{ st.uuid }}" aria-label="Data access to {{ st.name }}" {% if st.uuid in u.access %}checked{% endif %}>
+                                            {% else %}
+                                              {% if st.uuid in u.access %}<input type="hidden" name="access" value="{{ st.uuid }}">{% endif %}
+                                              <span class="badge text-bg-light border" title="The station policy already lets this user in">Yes, by policy</span>
+                                            {% endif %}
+                                          </td>
+                                          <td class="text-center">
+                                            <input class="form-check-input" type="checkbox" name="control" value="{{ st.uuid }}" aria-label="Chart settings of {{ st.name }}" {% if st.uuid in u.controls %}checked{% endif %}>
+                                          </td>
+                                        </tr>
+                                      {% endfor %}
+                                      </tbody>
+                                    </table>
+                                    <button class="btn btn-primary btn-sm" type="submit">Save station rights</button>
+                                    <span class="form-text ms-2">Data access is chosen here only for stations with the Restricted policy.</span>
+                                  </form>
+                                {% endif %}
+                              </div>
+                              <div class="col-lg-5">
+                                <h3 class="h6">Account</h3>
+                                <form method="post" action="{{ url_for('admin_update_user') }}" class="input-group input-group-sm mb-2">
+                                  <input type="hidden" name="username" value="{{ u.username }}">
+                                  <input type="hidden" name="action" value="email">
+                                  <span class="input-group-text">Email</span>
+                                  <input class="form-control" type="email" name="email" value="{{ u.email or '' }}" aria-label="Email of {{ u.username }}">
+                                  <button class="btn btn-outline-primary" type="submit">Save</button>
+                                </form>
+                                <div class="d-flex flex-wrap gap-2">
+                                  <form method="post" action="{{ url_for('admin_force_password') }}">
+                                    <input type="hidden" name="username" value="{{ u.username }}">
+                                    {% if u.force_password_change %}
+                                      <input type="hidden" name="force" value="0">
+                                      <button class="btn btn-outline-secondary btn-sm" type="submit">Stop asking for a new password</button>
+                                    {% else %}
+                                      <button class="btn btn-outline-warning btn-sm" type="submit">Ask for a new password</button>
+                                    {% endif %}
+                                  </form>
+                                  {% if u.username != admin_user.username %}
+                                    <form method="post" action="{{ url_for('admin_update_user') }}">
+                                      <input type="hidden" name="username" value="{{ u.username }}">
+                                      {% if u.role == 'admin' %}
+                                        <input type="hidden" name="action" value="make_user">
+                                        <button class="btn btn-outline-secondary btn-sm" type="submit">Make regular user</button>
+                                      {% else %}
+                                        <input type="hidden" name="action" value="make_admin">
+                                        <button class="btn btn-outline-secondary btn-sm" type="submit" data-confirm="Give {{ u.username }} full administrator rights?">Make administrator</button>
+                                      {% endif %}
+                                    </form>
+                                    <form method="post" action="{{ url_for('admin_update_user') }}">
+                                      <input type="hidden" name="username" value="{{ u.username }}">
+                                      {% if u.active %}
+                                        <input type="hidden" name="action" value="deactivate">
+                                        <button class="btn btn-outline-danger btn-sm" type="submit" data-confirm="Disable {{ u.username }}? They will not be able to log in.">Disable account</button>
+                                      {% else %}
+                                        <input type="hidden" name="action" value="activate">
+                                        <button class="btn btn-outline-success btn-sm" type="submit">Enable account</button>
+                                      {% endif %}
+                                    </form>
+                                  {% endif %}
+                                </div>
+                                <div class="form-text mt-2">Created {{ u.created_at }}</div>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                    </tbody>
+                  </table>
+                  </div>
+                  <p id="userSearchEmpty" class="text-muted mt-3 mb-0 d-none">No user matches the search.</p>
+                </div>
+
+                {# ------------------------------ Stations ------------------------------ #}
+                <div class="tab-pane fade" id="stations" role="tabpanel">
+                  <div class="alert alert-light border small">
+                    <b>Who can browse and download a station's data:</b>
+                    <span class="badge text-bg-success">Open</span> everyone, without login ·
+                    <span class="badge text-bg-primary">Account</span> every logged-in user ·
+                    <span class="badge text-bg-dark">Restricted</span> only the users you select; the station is also hidden from everyone else.
+                  </div>
+                  {% if not stations %}
+                    <p class="text-muted mb-0">No stations found in storage.</p>
+                  {% else %}
+                  <div class="table-responsive">
+                  <table class="table align-middle mb-0">
+                    <thead><tr><th>Station</th><th>Last data</th><th>Policy</th><th>Users</th><th></th></tr></thead>
+                    <tbody>
+                    {% for st in stations %}
+                      <tr>
+                        <td>
+                          <div class="fw-semibold">{{ st.name }}</div>
+                          {% if st.name != st.uuid %}<div class="uuid text-muted">{{ st.uuid }}</div>{% endif %}
+                        </td>
+                        <td class="small">{{ st.last_timestamp or '-' }}</td>
+                        <td>
+                          <form method="post" action="{{ url_for('admin_set_policy') }}" class="d-flex gap-1">
+                            <input type="hidden" name="instrument_uuid" value="{{ st.uuid }}">
+                            <select class="form-select form-select-sm policy-select" name="policy" style="min-width: 8.5rem;" aria-label="Policy of {{ st.name }}">
+                              <option value="open" {% if st.policy=='open' %}selected{% endif %}>Open</option>
+                              <option value="account" {% if st.policy=='account' %}selected{% endif %}>Account</option>
+                              <option value="restricted" {% if st.policy=='restricted' %}selected{% endif %}>Restricted</option>
+                            </select>
+                            <button class="btn btn-outline-primary btn-sm policy-save" type="submit">Save</button>
+                          </form>
+                        </td>
+                        <td class="small">
+                          {% if st.policy == 'restricted' %}{{ st.access_count }} with data access{% else %}All by policy{% endif %}
+                          · {{ st.control_count }} chart editor{{ '' if st.control_count == 1 else 's' }}
+                        </td>
+                        <td class="text-end text-nowrap">
+                          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('public_station', instrument_uuid=st.uuid) }}">Dashboard</a>
+                          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('browse_station', instrument_uuid=st.uuid) }}">Data</a>
+                          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('station_chart_settings', instrument_uuid=st.uuid) }}">Chart settings</a>
+                          <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#station-{{ loop.index }}">Users</button>
+                        </td>
+                      </tr>
+                      <tr class="manage-row">
+                        <td colspan="5" class="p-0 border-0">
+                          <div class="collapse" id="station-{{ loop.index }}">
+                            <div class="p-3">
+                              <h3 class="h6">Users of {{ st.name }}</h3>
+                              {% if not regular_users %}
+                                <p class="text-muted mb-0">There are no regular users yet. Administrators already have every right.</p>
+                              {% else %}
+                                <form method="post" action="{{ url_for('admin_set_station_permissions') }}" style="max-width: 44rem;">
+                                  <input type="hidden" name="station_uuid" value="{{ st.uuid }}">
+                                  <table class="table table-sm rights-table bg-white border">
+                                    <thead><tr>
+                                      <th>User</th>
+                                      <th class="text-center">Data access</th>
+                                      <th class="text-center">Chart settings</th>
+                                    </tr></thead>
+                                    <tbody>
+                                    {% for u in regular_users %}
+                                      <tr>
+                                        <td>
+                                          <input type="hidden" name="user" value="{{ u.username }}">
+                                          {{ u.username }}
+                                          {% if not u.active %}<span class="badge text-bg-danger">Disabled</span>{% endif %}
+                                          <div class="small text-muted">{{ u.email or 'no email' }}</div>
+                                        </td>
+                                        <td class="text-center">
+                                          {% if st.policy == 'restricted' %}
+                                            <input class="form-check-input" type="checkbox" name="access" value="{{ u.username }}" aria-label="Data access for {{ u.username }}" {% if st.uuid in u.access %}checked{% endif %}>
+                                          {% else %}
+                                            {% if st.uuid in u.access %}<input type="hidden" name="access" value="{{ u.username }}">{% endif %}
+                                            <span class="badge text-bg-light border">Yes, by policy</span>
+                                          {% endif %}
+                                        </td>
+                                        <td class="text-center">
+                                          <input class="form-check-input" type="checkbox" name="control" value="{{ u.username }}" aria-label="Chart settings for {{ u.username }}" {% if st.uuid in u.controls %}checked{% endif %}>
+                                        </td>
+                                      </tr>
+                                    {% endfor %}
+                                    </tbody>
+                                  </table>
+                                  <button class="btn btn-primary btn-sm" type="submit">Save users</button>
+                                  {% if st.policy != 'restricted' %}
+                                    <span class="form-text ms-2">Set the policy to Restricted to choose who has data access.</span>
+                                  {% endif %}
+                                </form>
+                              {% endif %}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                    </tbody>
+                  </table>
+                  </div>
+                  {% endif %}
+                </div>
+
+                {# ------------------------------ Requests ------------------------------ #}
+                <div class="tab-pane fade" id="requests" role="tabpanel">
+                  {% if not smtp_ready %}
+                    <div class="alert alert-warning small">Email is not configured: after approving a request, the onboarding link is shown here for you to pass on.</div>
+                  {% endif %}
+                  {% if pending_requests %}
+                    {% for r in pending_requests %}
+                      <div class="card mb-2"><div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <div>
+                          <div class="fw-semibold">{{ r.email }}</div>
+                          <div class="small">{{ r.message or 'No reason given.' }}</div>
+                          <div class="small text-muted">Request #{{ r.id }} · {{ r.created_at }}</div>
+                        </div>
+                        <div class="d-flex gap-2">
+                          <form method="post" action="{{ url_for('admin_approve_request', request_id=r.id) }}">
+                            <button class="btn btn-success btn-sm" type="submit">Approve</button>
+                          </form>
+                          <form method="post" action="{{ url_for('admin_reject_request', request_id=r.id) }}">
+                            <button class="btn btn-outline-danger btn-sm" type="submit" data-confirm="Reject the request from {{ r.email }}?">Reject</button>
+                          </form>
+                        </div>
+                      </div></div>
+                    {% endfor %}
+                  {% else %}
+                    <p class="text-muted mb-0">No pending requests.</p>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+
+            <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+            <script>
+              (function () {
+                // Open the tab named in the URL (actions come back to the tab they started from).
+                const showTab = (hash) => {
+                  const trigger = document.querySelector(`#adminTabs [data-bs-target="${hash}"]`);
+                  if (trigger && window.bootstrap) bootstrap.Tab.getOrCreateInstance(trigger).show();
+                };
+                const showTabFromUrl = () => {
+                  if (['#users', '#stations', '#requests'].includes(window.location.hash)) showTab(window.location.hash);
+                };
+                showTabFromUrl();
+                window.addEventListener('hashchange', showTabFromUrl);
+                document.querySelectorAll('#adminTabs [data-bs-toggle="tab"]').forEach((trigger) => {
+                  trigger.addEventListener('shown.bs.tab', () => {
+                    window.history.replaceState({}, '', trigger.dataset.bsTarget);
+                  });
+                });
+
+                document.querySelectorAll('[data-confirm]').forEach((button) => {
+                  button.addEventListener('click', (event) => {
+                    if (!window.confirm(button.dataset.confirm)) event.preventDefault();
+                  });
+                });
+
+                // A changed policy is saved at once; the Save button remains for browsers without scripts.
+                document.querySelectorAll('.policy-select').forEach((select) => {
+                  select.form.querySelector('.policy-save').classList.add('d-none');
+                  select.addEventListener('change', () => select.form.requestSubmit());
+                });
+
+                const search = document.getElementById('userSearch');
+                const empty = document.getElementById('userSearchEmpty');
+                search.addEventListener('input', () => {
+                  const term = search.value.trim().toLowerCase();
+                  let shown = 0;
+                  document.querySelectorAll('#userTable .user-row').forEach((row) => {
+                    const match = !term || row.dataset.search.includes(term);
+                    row.classList.toggle('d-none', !match);
+                    if (match) shown += 1;
+                  });
+                  empty.classList.toggle('d-none', shown > 0);
+                });
+              })();
+            </script>
             </body></html>
             """,
             admin_user=admin_user,
-            instruments=instruments,
-            policies=policies,
+            stations=stations,
             users=users,
+            regular_users=regular_users,
             pending_requests=pending_requests,
-            user_access=user_access,
-            user_controls=user_controls,
+            smtp_ready=bool(cfg.get("smtp_enabled") and cfg.get("smtp_host")),
         )
 
     @app.route("/admin/dashboard")
@@ -6369,33 +6797,41 @@ def create_web_app(cfg: dict, access_store: AccessStore):
             abort(400, "Invalid JSON file")
         return redirect(url_for("station_chart_settings", instrument_uuid=instrument_uuid))
 
+    def admin_done(tab: str, ok: bool, message: str):
+        """Report the outcome of an admin action on the tab it was started from."""
+        flash(message, "success" if ok else "danger")
+        return redirect(url_for("admin") + f"#{tab}")
+
     @app.route("/admin/create-user", methods=["POST"])
     def admin_create_user():
         admin_user = require_admin()
         if not isinstance(admin_user, dict):
             return admin_user
 
-        username = request.form.get("username", "")
-        email = request.form.get("email", "")
+        username = request.form.get("username", "").strip()
+        email = request.form.get("email", "").strip()
         password = request.form.get("password", "")
         role = request.form.get("role", "user")
 
-        if not password:
-            abort(400, "Password required")
-
+        if email and not is_valid_email(email):
+            return admin_done("users", False, "Email address is not valid")
         ok, msg = access_store.create_user(username, password, email, role=role)
         if not ok:
-            abort(400, msg)
-        if email.strip():
-            token = access_store.create_login_token(username.strip(), ttl_minutes=60)
+            return admin_done("users", False, msg)
+        if parse_boolish(request.form.get("force_password_change"), False):
+            access_store.set_force_password_change(username, True)
+        msg = f"User {username} created"
+        if email:
+            token = access_store.create_login_token(username, ttl_minutes=60)
             link = compose_external_url(cfg["base_url"], url_for("fast_login"), {"token": token})
-            send_email(
+            sent = send_email(
                 cfg,
-                [email.strip()],
+                [email],
                 "Welcome to Sensor Network Collector",
                 f"Hello {username},\n\nYour account has been created.\nFast login link (expires in 60 minutes):\n{link}\n",
             )
-        return redirect(url_for("admin"))
+            msg += "; a welcome email with a login link was sent" if sent else "; no welcome email was sent"
+        return admin_done("users", True, msg)
 
     @app.route("/admin/requests/<int:request_id>/approve", methods=["POST"])
     def admin_approve_request(request_id: int):
@@ -6404,12 +6840,12 @@ def create_web_app(cfg: dict, access_store: AccessStore):
             return admin_user
         ok, msg = access_store.approve_request(request_id, admin_user["username"])
         if not ok:
-            abort(400, msg)
+            return admin_done("requests", False, msg)
         req = access_store.get_account_request(request_id)
         if req and req.get("email"):
             token = access_store.create_account_request_token(request_id, ttl_hours=48)
             link = compose_external_url(cfg["base_url"], url_for("complete_account_request"), {"token": token})
-            send_email(
+            sent = send_email(
                 cfg,
                 [req["email"]],
                 "Sensor Network Collector: account approved",
@@ -6421,7 +6857,15 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                     f"{link}\n"
                 ),
             )
-        return redirect(url_for("admin"))
+            if sent:
+                msg = f"Request approved; the onboarding link was emailed to {req['email']}"
+            else:
+                # Without email the link would be lost: hand it to the admin instead.
+                msg = (
+                    f"Request approved, but no email could be sent. Give this onboarding link "
+                    f"(valid 48 hours) to {req['email']}: {link}"
+                )
+        return admin_done("requests", True, msg)
 
     @app.route("/admin/requests/<int:request_id>/reject", methods=["POST"])
     def admin_reject_request(request_id: int):
@@ -6429,9 +6873,7 @@ def create_web_app(cfg: dict, access_store: AccessStore):
         if not isinstance(admin_user, dict):
             return admin_user
         ok, msg = access_store.reject_request(request_id, admin_user["username"])
-        if not ok:
-            abort(400, msg)
-        return redirect(url_for("admin"))
+        return admin_done("requests", ok, msg)
 
     @app.route("/admin/policy", methods=["POST"])
     def admin_set_policy():
@@ -6442,9 +6884,9 @@ def create_web_app(cfg: dict, access_store: AccessStore):
         instrument_uuid = request.form.get("instrument_uuid", "")
         policy = request.form.get("policy", "")
         ok, msg = access_store.set_policy(instrument_uuid, policy, admin_user["username"])
-        if not ok:
-            abort(400, msg)
-        return redirect(url_for("admin"))
+        if ok:
+            msg = f"Policy of {instrument_uuid.strip()} set to {policy}"
+        return admin_done("stations", ok, msg)
 
     @app.route("/admin/user-access", methods=["POST"])
     def admin_set_user_access():
@@ -6457,9 +6899,7 @@ def create_web_app(cfg: dict, access_store: AccessStore):
         allow = parse_boolish(request.form.get("allow", "1"), True)
 
         ok, msg = access_store.set_user_instrument_access(username, instrument_uuid, allow)
-        if not ok:
-            abort(400, msg)
-        return redirect(url_for("admin"))
+        return admin_done("users", ok, msg)
 
     @app.route("/admin/user-control", methods=["POST"])
     def admin_set_user_control():
@@ -6472,9 +6912,54 @@ def create_web_app(cfg: dict, access_store: AccessStore):
         allow = parse_boolish(request.form.get("allow", "1"), True)
 
         ok, msg = access_store.set_user_station_control(username, station_uuid, allow)
-        if not ok:
-            abort(400, msg)
-        return redirect(url_for("admin"))
+        return admin_done("users", ok, msg)
+
+    @app.route("/admin/user-permissions", methods=["POST"])
+    def admin_set_user_permissions():
+        admin_user = require_admin()
+        if not isinstance(admin_user, dict):
+            return admin_user
+        ok, msg = access_store.replace_user_permissions(
+            request.form.get("username", ""),
+            request.form.getlist("station"),
+            request.form.getlist("access"),
+            request.form.getlist("control"),
+        )
+        return admin_done("users", ok, msg)
+
+    @app.route("/admin/station-permissions", methods=["POST"])
+    def admin_set_station_permissions():
+        admin_user = require_admin()
+        if not isinstance(admin_user, dict):
+            return admin_user
+        ok, msg = access_store.replace_station_permissions(
+            request.form.get("station_uuid", ""),
+            request.form.getlist("user"),
+            request.form.getlist("access"),
+            request.form.getlist("control"),
+        )
+        return admin_done("stations", ok, msg)
+
+    @app.route("/admin/user-update", methods=["POST"])
+    def admin_update_user():
+        admin_user = require_admin()
+        if not isinstance(admin_user, dict):
+            return admin_user
+        username = request.form.get("username", "").strip()
+        action = request.form.get("action", "")
+        changes = {
+            "activate": {"active": True},
+            "deactivate": {"active": False},
+            "make_admin": {"role": "admin"},
+            "make_user": {"role": "user"},
+            "email": {"email": request.form.get("email", "")},
+        }.get(action)
+        if changes is None:
+            return admin_done("users", False, "Unknown action")
+        if username == admin_user["username"] and action in ("deactivate", "make_user"):
+            return admin_done("users", False, "You cannot disable or demote your own account")
+        ok, msg = access_store.update_user(username, **changes)
+        return admin_done("users", ok, msg)
 
     @app.route("/admin/force-password", methods=["POST"])
     def admin_force_password():
@@ -6483,11 +6968,16 @@ def create_web_app(cfg: dict, access_store: AccessStore):
             return admin_user
         username = request.form.get("username", "").strip()
         if not username:
-            abort(400, "Username is required")
-        ok, msg = access_store.set_force_password_change(username, True)
-        if not ok:
-            abort(400, msg)
-        return redirect(url_for("admin"))
+            return admin_done("users", False, "Username is required")
+        force = parse_boolish(request.form.get("force", "1"), True)
+        ok, msg = access_store.set_force_password_change(username, force)
+        if ok:
+            msg = (
+                f"{username} must choose a new password at the next login"
+                if force
+                else f"{username} is no longer asked to change password"
+            )
+        return admin_done("users", ok, msg)
 
     return app
 

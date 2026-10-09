@@ -92,13 +92,47 @@ answers `404` otherwise, and its snapshot API answers `404`.
 
 If an unauthenticated user opens a protected page, the web app redirects to `/login` and shows an alert explaining that authentication is required. The original destination is preserved in `next=...` and is reopened after successful login.
 
+## Administration page
+
+`/admin` has three tabs; every action reports its result at the top of the page and
+returns to the tab it was started from (`/admin#users`, `/admin#stations`,
+`/admin#requests`).
+
+- **Users**: searchable list with role, status, and a summary of station rights.
+  `New user` opens the creation form (the password rules are shown; "ask for a new
+  password at the first login" is ticked by default). `Manage` opens, for one user:
+  - a table of all stations with a `Data access` and a `Chart settings` checkbox per
+    station; data access can be chosen only for stations with the Restricted policy,
+    the others show "Yes, by policy"
+  - account actions: change the email, ask for (or stop asking for) a new password,
+    make administrator / regular user, disable / enable the account
+- **Stations**: name, UUID, time of the last data, policy (saved as soon as it is
+  changed), how many users have rights, and links to the dashboard, the data browser
+  and the chart settings. `Users` opens the same rights table seen from the station:
+  one row per regular user.
+- **Account requests**: pending requests with `Approve` and `Reject`. When no email
+  can be sent, the onboarding link (valid 48 hours) is shown to the administrator
+  after approval so that it can be passed on by other means.
+
+Rules enforced by the server:
+
+- a disabled account cannot log in and its open sessions stop working
+- administrators cannot disable or demote their own account, and the last active
+  administrator cannot be disabled or demoted
+- administrators have every right on every station, so they have no rights table
+
+Form endpoints (all `POST`, admin only): `/admin/create-user`, `/admin/user-update`,
+`/admin/user-permissions`, `/admin/station-permissions`, `/admin/policy`,
+`/admin/force-password`, `/admin/requests/<id>/approve`, `/admin/requests/<id>/reject`,
+and the single-assignment `/admin/user-access` and `/admin/user-control`.
+
 ## Chart control rights
 
 Chart setup rights are separate from download/browse rights.
 
 - admins can edit trend-chart settings for every station
 - non-admin users can edit a station chart setup only if they have explicit chart-control rights for that station
-- chart-control rights are assigned from `/admin`
+- chart-control rights are assigned from `/admin` (the `Chart settings` column of the rights tables)
 
 This is used for the Public Station Dashboard trend charts only.
 
