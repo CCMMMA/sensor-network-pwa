@@ -484,6 +484,18 @@ class WebAndAuthTests(unittest.TestCase):
             self.assertNotIn(char, island)
         self.assertIn(hostile, [station["uuid"] for station in json.loads(island)["stations"]])
 
+    def test_application_factory_registers_blueprints_and_isolates_state(self):
+        endpoints = {rule.endpoint for rule in self.app.url_map.iter_rules()} - {"static"}
+        self.assertTrue(all("." in endpoint for endpoint in endpoints), endpoints)
+        self.assertEqual(
+            {endpoint.split(".")[0] for endpoint in endpoints},
+            {"pwa", "public", "stations", "auth", "admin", "profile"},
+        )
+        # A second application in the same process keeps its own configuration.
+        other = create_web_app(dict(self.cfg, web_app_name="Other portal"), self.store)
+        self.assertIn("Other portal", other.test_client().get("/offline").get_data(as_text=True))
+        self.assertNotIn("Other portal", self.app.test_client().get("/offline").get_data(as_text=True))
+
     def test_file_selection_follows_requested_hours(self):
         root = self.cfg["storage_root"]
         base = datetime(2024, 12, 31, 22, 30, tzinfo=timezone.utc)

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from flask import abort, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, Response, abort, g, redirect, render_template, request, send_file, url_for
 
 from sensor_network_pwa.charts import (
     DEFAULT_CHART_COLORS,
@@ -34,6 +34,20 @@ from sensor_network_pwa.storage import (
 )
 from sensor_network_pwa.timeutil import parse_date_ymd, parse_iso_ts, utc_iso, utc_now
 from sensor_network_pwa.validation import safe_filename
+from sensor_network_pwa.web.access import (
+    app_logo_path,
+    available_instruments,
+    current_user,
+    get_cfg,
+    get_store,
+    login_required,
+    logo_url,
+    redirect_to_login,
+    station_is_accessible,
+    station_is_controllable,
+    station_logo_dir,
+    storage_root_or_404,
+)
 from sensor_network_pwa.web.util import json_for_script, request_preference_cookie
 
 STATION_BROWSER_MAX_CHART_POINTS = 3000
@@ -224,278 +238,283 @@ def _csv_chunks(rows, columns):
     yield buffer.getvalue()
 
 
-def register(app, ctx):
-    def load_station_window(instrument_uuid: str):
-        """Access check and rows of the time range selected by the request arguments.
+bp = Blueprint("stations", __name__)
 
-        Used by the station page and by its CSV export, so both show the same rows.
-        Returns a StationWindow, or the redirect to the login page.
-        """
-        user = ctx.current_user()
-        storage_root = ctx.storage_root_or_404()
-        if instrument_uuid not in set(ctx.available_instruments(storage_root)):
-            abort(404, "Station not found")
-        if not ctx.station_is_accessible(user, instrument_uuid):
-            if user is None:
-                return ctx.redirect_to_login("Please log in to browse this station.")
-            abort(403)
 
-        window = _requested_window(user, get_station_preview(storage_root, instrument_uuid))
-        _load_window_rows(window, storage_root, instrument_uuid)
+def load_station_window(instrument_uuid: str):
+    """Access check and rows of the time range selected by the request arguments.
+
+    Used by the station page and by its CSV export, so both show the same rows.
+    Returns a StationWindow, or the redirect to the login page.
+    """
+    user = current_user()
+    storage_root = storage_root_or_404()
+    if instrument_uuid not in set(available_instruments(storage_root)):
+        abort(404, "Station not found")
+    if not station_is_accessible(user, instrument_uuid):
+        if user is None:
+            return redirect_to_login("Please log in to browse this station.")
+        abort(403)
+
+    window = _requested_window(user, get_station_preview(storage_root, instrument_uuid))
+    _load_window_rows(window, storage_root, instrument_uuid)
+    return window
+
+
+@bp.route("/station/<path:instrument_uuid>/export.csv")
+def export_station_csv(instrument_uuid: str):
+    window = load_station_window(instrument_uuid)
+    if not isinstance(window, StationWindow):
         return window
+    rows = window.rows
+    all_columns = list(dict.fromkeys(key for row in rows for key in row))
+    wanted = [c for c in request.args.getlist("col") if c in all_columns]
+    if not rows:
+        abort(404, "No data rows in the selected time range")
 
-    @app.route("/station/<path:instrument_uuid>/export.csv")
-    def export_station_csv(instrument_uuid: str):
-        window = load_station_window(instrument_uuid)
-        if not isinstance(window, StationWindow):
-            return window
-        rows = window.rows
-        all_columns = list(dict.fromkeys(key for row in rows for key in row))
-        wanted = [c for c in request.args.getlist("col") if c in all_columns]
-        if not rows:
-            abort(404, "No data rows in the selected time range")
+    stamp = "%Y%m%dT%H%M%SZ"
+    filename = safe_filename(
+        f"{instrument_uuid}_{window.win_start.strftime(stamp)}_{window.win_end.strftime(stamp)}.csv"
+    )
+    response = Response(_csv_chunks(rows, wanted or all_columns), mimetype="text/csv")
+    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
 
-        stamp = "%Y%m%dT%H%M%SZ"
-        filename = safe_filename(
-            f"{instrument_uuid}_{window.win_start.strftime(stamp)}_{window.win_end.strftime(stamp)}.csv"
-        )
-        response = app.response_class(_csv_chunks(rows, wanted or all_columns), mimetype="text/csv")
-        response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
-        return response
 
-    @app.route("/station/<path:instrument_uuid>")
-    def browse_station(instrument_uuid: str):
-        window = load_station_window(instrument_uuid)
-        if not isinstance(window, StationWindow):
-            return window
-        rows = window.rows
-        station_logo_row = ctx.access_store.get_station_logo(instrument_uuid)
-        station_logo_url = None
-        if station_logo_row:
-            station_logo_url = url_for("asset_file", kind="station", name=Path(station_logo_row["logo_path"]).name)
+@bp.route("/station/<path:instrument_uuid>")
+def browse_station(instrument_uuid: str):
+    window = load_station_window(instrument_uuid)
+    if not isinstance(window, StationWindow):
+        return window
+    rows = window.rows
+    station_logo_row = get_store().get_station_logo(instrument_uuid)
+    station_logo_url = None
+    if station_logo_row:
+        station_logo_url = url_for("public.asset_file", kind="station", name=Path(station_logo_row["logo_path"]).name)
 
-        numeric_cols = extract_numeric_series(rows, excluded=NON_SERIES_COLUMNS)
-        units_map = get_field_units(ctx.cfg)
-        chart_rows, chart_step = _thin_for_chart(rows)
-        # Hourly files can have different headers, so use every column seen in the window.
-        all_table_columns = list(dict.fromkeys(key for row in rows for key in row))
+    numeric_cols = extract_numeric_series(rows, excluded=NON_SERIES_COLUMNS)
+    units_map = get_field_units(get_cfg())
+    chart_rows, chart_step = _thin_for_chart(rows)
+    # Hourly files can have different headers, so use every column seen in the window.
+    all_table_columns = list(dict.fromkeys(key for row in rows for key in row))
 
-        return render_template(
-            "station_browser.html",
-            instrument_uuid=instrument_uuid,
-            station_name=window.preview.get("name") or instrument_uuid,
-            user=window.user,
-            can_control=ctx.station_is_controllable(window.user, instrument_uuid),
-            app_logo_url=ctx.logo_url(ctx.app_logo_path),
-            station_logo_url=station_logo_url,
-            interval=window.interval,
-            interval_options=TREND_INTERVALS,
-            chart_step=chart_step,
-            win_start=utc_iso(window.win_start),
-            win_end=utc_iso(window.win_end),
-            is_latest=window.win_end >= window.latest_dt,
-            numeric_cols=numeric_cols,
-            default_chart_colors=DEFAULT_CHART_COLORS,
-            all_table_columns=all_table_columns,
-            table_column_stats=build_table_column_stats(rows, numeric_cols),
-            units_map=units_map,
-            page_sizes=STATION_BROWSER_PAGE_SIZES,
-            max_custom_days=STATION_BROWSER_MAX_CUSTOM_DAYS,
-            station_browse_state_json=json_for_script(
-                {
-                    "chart_labels": [str(row.get("timestamp") or "") for row in chart_rows],
-                    "numeric_cols": numeric_cols,
-                    "all_table_columns": all_table_columns,
-                    "units_map": units_map,
-                    "numeric_series_aligned": {
-                        column: [to_float(row.get(column)) for row in chart_rows] for column in numeric_cols
-                    },
-                }
-            ),
-            **_range_link_args(window),
-            **_table_page(rows),
-        )
+    return render_template(
+        "stations/station_browser.html",
+        instrument_uuid=instrument_uuid,
+        station_name=window.preview.get("name") or instrument_uuid,
+        user=window.user,
+        can_control=station_is_controllable(window.user, instrument_uuid),
+        app_logo_url=logo_url(app_logo_path()),
+        station_logo_url=station_logo_url,
+        interval=window.interval,
+        interval_options=TREND_INTERVALS,
+        chart_step=chart_step,
+        win_start=utc_iso(window.win_start),
+        win_end=utc_iso(window.win_end),
+        is_latest=window.win_end >= window.latest_dt,
+        numeric_cols=numeric_cols,
+        default_chart_colors=DEFAULT_CHART_COLORS,
+        all_table_columns=all_table_columns,
+        table_column_stats=build_table_column_stats(rows, numeric_cols),
+        units_map=units_map,
+        page_sizes=STATION_BROWSER_PAGE_SIZES,
+        max_custom_days=STATION_BROWSER_MAX_CUSTOM_DAYS,
+        station_browse_state_json=json_for_script(
+            {
+                "chart_labels": [str(row.get("timestamp") or "") for row in chart_rows],
+                "numeric_cols": numeric_cols,
+                "all_table_columns": all_table_columns,
+                "units_map": units_map,
+                "numeric_series_aligned": {
+                    column: [to_float(row.get(column)) for row in chart_rows] for column in numeric_cols
+                },
+            }
+        ),
+        **_range_link_args(window),
+        **_table_page(rows),
+    )
 
-    @app.route("/station/<path:instrument_uuid>/logo", methods=["POST"])
-    def upload_station_logo(instrument_uuid: str):
-        user = ctx.require_login()
-        if not isinstance(user, dict):
-            return user
-        storage_root = ctx.storage_root_or_404()
-        instruments = set(ctx.available_instruments(storage_root))
-        if instrument_uuid not in instruments:
-            abort(404, "Station not found")
-        if not ctx.station_is_accessible(user, instrument_uuid):
-            abort(403)
 
-        f = request.files.get("logo")
-        if f is None or not f.filename:
-            abort(400, "Missing logo file")
-        original = safe_filename(f.filename)
-        ext = Path(original).suffix.lower()
-        if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"):
-            abort(400, "Unsupported logo format")
+@bp.route("/station/<path:instrument_uuid>/logo", methods=["POST"])
+@login_required
+def upload_station_logo(instrument_uuid: str):
+    user = g.user
+    storage_root = storage_root_or_404()
+    instruments = set(available_instruments(storage_root))
+    if instrument_uuid not in instruments:
+        abort(404, "Station not found")
+    if not station_is_accessible(user, instrument_uuid):
+        abort(403)
 
-        content = f.read()
-        if not content:
-            abort(400, "Empty logo file")
-        digest = hashlib.sha256(content).hexdigest()[:12]
-        out_name = safe_filename(f"{instrument_uuid}_{digest}{ext}")
-        out_path = ctx.station_logo_dir() / out_name
-        out_path.write_bytes(content)
-        ctx.access_store.set_station_logo(instrument_uuid, str(out_path), user["username"])
-        return redirect(url_for("browse_station", instrument_uuid=instrument_uuid))
+    f = request.files.get("logo")
+    if f is None or not f.filename:
+        abort(400, "Missing logo file")
+    original = safe_filename(f.filename)
+    ext = Path(original).suffix.lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"):
+        abort(400, "Unsupported logo format")
 
-    @app.route("/download", methods=["POST"])
-    def download():
-        user = ctx.current_user()
-        storage_root = ctx.storage_root_or_404()
-        all_instruments = set(ctx.available_instruments(storage_root))
+    content = f.read()
+    if not content:
+        abort(400, "Empty logo file")
+    digest = hashlib.sha256(content).hexdigest()[:12]
+    out_name = safe_filename(f"{instrument_uuid}_{digest}{ext}")
+    out_path = station_logo_dir() / out_name
+    out_path.write_bytes(content)
+    get_store().set_station_logo(instrument_uuid, str(out_path), user["username"])
+    return redirect(url_for("stations.browse_station", instrument_uuid=instrument_uuid))
 
-        requested = []
-        for inst in request.form.getlist("instrument"):
-            inst = str(inst).strip()
-            if inst and inst not in requested:
-                requested.append(inst)
 
-        if not requested:
-            abort(400, "Select at least one instrument")
+@bp.route("/download", methods=["POST"])
+def download():
+    user = current_user()
+    storage_root = storage_root_or_404()
+    all_instruments = set(available_instruments(storage_root))
 
-        unknown = [inst for inst in requested if inst not in all_instruments]
-        if unknown:
-            abort(404, f"Unknown station(s): {', '.join(unknown)}")
+    requested = []
+    for inst in request.form.getlist("instrument"):
+        inst = str(inst).strip()
+        if inst and inst not in requested:
+            requested.append(inst)
 
-        unauthorized = [inst for inst in requested if not ctx.station_is_accessible(user, inst)]
-        if unauthorized:
-            abort(403, f"Access denied for station(s): {', '.join(unauthorized)}")
+    if not requested:
+        abort(400, "Select at least one instrument")
 
-        from_date = parse_date_ymd(request.form.get("from_date", ""))
-        to_date = parse_date_ymd(request.form.get("to_date", ""))
-        if from_date and to_date and to_date < from_date:
-            abort(400, "to_date must be >= from_date")
+    unknown = [inst for inst in requested if inst not in all_instruments]
+    if unknown:
+        abort(404, f"Unknown station(s): {', '.join(unknown)}")
 
-        zip_path, count = make_zip_for_download(storage_root, requested, from_date=from_date, to_date=to_date)
-        if count == 0:
-            zip_path.unlink(missing_ok=True)
-            abort(404, "No data files found for selected filters")
+    unauthorized = [inst for inst in requested if not station_is_accessible(user, inst)]
+    if unauthorized:
+        abort(403, f"Access denied for station(s): {', '.join(unauthorized)}")
 
-        response = send_file(
-            zip_path,
-            as_attachment=True,
-            download_name=f"collector_data_{datetime.now().strftime('%Y%m%dT%H%M%S')}.zip",
-            mimetype="application/zip",
-        )
-        # send_file() already holds the archive open, so on POSIX it can be removed
-        # now and the space is released once the response has been streamed.
-        with contextlib.suppress(OSError):
-            zip_path.unlink(missing_ok=True)
-        return response
+    from_date = parse_date_ymd(request.form.get("from_date", ""))
+    to_date = parse_date_ymd(request.form.get("to_date", ""))
+    if from_date and to_date and to_date < from_date:
+        abort(400, "to_date must be >= from_date")
 
-    @app.route("/station/<path:instrument_uuid>/chart-settings", methods=["GET", "POST"])
-    def station_chart_settings(instrument_uuid: str):
-        user = ctx.require_login()
-        if not isinstance(user, dict):
-            return user
+    zip_path, count = make_zip_for_download(storage_root, requested, from_date=from_date, to_date=to_date)
+    if count == 0:
+        zip_path.unlink(missing_ok=True)
+        abort(404, "No data files found for selected filters")
 
-        storage_root = ctx.storage_root_or_404()
-        instruments = set(ctx.available_instruments(storage_root))
-        if instrument_uuid not in instruments:
-            abort(404, "Station not found")
-        if not ctx.station_is_controllable(user, instrument_uuid):
-            abort(403)
+    response = send_file(
+        zip_path,
+        as_attachment=True,
+        download_name=f"collector_data_{datetime.now().strftime('%Y%m%dT%H%M%S')}.zip",
+        mimetype="application/zip",
+    )
+    # send_file() already holds the archive open, so on POSIX it can be removed
+    # now and the space is released once the response has been streamed.
+    with contextlib.suppress(OSError):
+        zip_path.unlink(missing_ok=True)
+    return response
 
-        msg = ""
-        err = ""
-        if request.method == "POST":
-            raw_settings = {}
-            for spec in get_chart_setting_catalog():
-                raw_settings[spec["key"]] = {
-                    "y_min": request.form.get(f"y_min__{spec['key']}", ""),
-                    "y_max": request.form.get(f"y_max__{spec['key']}", ""),
-                    "y_step": request.form.get(f"y_step__{spec['key']}", ""),
-                }
-            try:
-                normalized = normalize_station_chart_settings_map(raw_settings)
-                ctx.access_store.replace_station_chart_settings(instrument_uuid, normalized, user["username"])
-                msg = "Trend chart settings saved"
-            except ValueError as e:
-                err = str(e)
 
-        preview = get_station_preview(storage_root, instrument_uuid)
-        snapshot = build_public_station_snapshot(
-            storage_root,
-            instrument_uuid,
-            window="hour",
-            max_points=120,
-            cfg=ctx.cfg,
-            access_store=ctx.access_store,
-        )
-        effective_series = {item["key"]: item for item in snapshot.get("series", [])}
-        chart_specs = resolve_station_chart_specs(ctx.access_store, instrument_uuid)
-        return render_template(
-            "station_chart_settings.html",
-            instrument_uuid=instrument_uuid,
-            station_name=preview.get("name") or instrument_uuid,
-            chart_specs=chart_specs,
-            effective_series=effective_series,
-            msg=msg,
-            err=err,
-        )
+@bp.route("/station/<path:instrument_uuid>/chart-settings", methods=["GET", "POST"])
+@login_required
+def station_chart_settings(instrument_uuid: str):
+    user = g.user
 
-    @app.route("/station/<path:instrument_uuid>/chart-settings/export")
-    def station_chart_settings_export(instrument_uuid: str):
-        user = ctx.require_login()
-        if not isinstance(user, dict):
-            return user
-        storage_root = ctx.storage_root_or_404()
-        instruments = set(ctx.available_instruments(storage_root))
-        if instrument_uuid not in instruments:
-            abort(404, "Station not found")
-        if not ctx.station_is_controllable(user, instrument_uuid):
-            abort(403)
+    storage_root = storage_root_or_404()
+    instruments = set(available_instruments(storage_root))
+    if instrument_uuid not in instruments:
+        abort(404, "Station not found")
+    if not station_is_controllable(user, instrument_uuid):
+        abort(403)
 
-        payload = export_station_chart_settings_payload(ctx.access_store, instrument_uuid)
-        response = app.response_class(
-            response=json.dumps(payload, indent=2, sort_keys=True),
-            status=200,
-            mimetype="application/json",
-        )
-        response.headers["Content-Disposition"] = (
-            f"attachment; filename={safe_filename(instrument_uuid)}_chart_settings.json"
-        )
-        return response
-
-    @app.route("/station/<path:instrument_uuid>/chart-settings/import", methods=["POST"])
-    def station_chart_settings_import(instrument_uuid: str):
-        user = ctx.require_login()
-        if not isinstance(user, dict):
-            return user
-        storage_root = ctx.storage_root_or_404()
-        instruments = set(ctx.available_instruments(storage_root))
-        if instrument_uuid not in instruments:
-            abort(404, "Station not found")
-        if not ctx.station_is_controllable(user, instrument_uuid):
-            abort(403)
-
-        upload = request.files.get("settings_file")
-        if upload is None or not upload.filename:
-            abort(400, "Missing JSON file")
+    msg = ""
+    err = ""
+    if request.method == "POST":
+        raw_settings = {}
+        for spec in get_chart_setting_catalog():
+            raw_settings[spec["key"]] = {
+                "y_min": request.form.get(f"y_min__{spec['key']}", ""),
+                "y_max": request.form.get(f"y_max__{spec['key']}", ""),
+                "y_step": request.form.get(f"y_step__{spec['key']}", ""),
+            }
         try:
-            payload = json.load(upload.stream)
-            if not isinstance(payload, dict):
-                raise ValueError("Invalid JSON payload")
-            payload_station_uuid = str(payload.get("station_uuid") or "").strip()
-            foreign = payload_station_uuid and payload_station_uuid != instrument_uuid
-            if foreign and not parse_boolish(request.form.get("confirm_foreign_station", "0"), False):
-                abort(
-                    400,
-                    f"JSON file belongs to station {payload_station_uuid}. "
-                    "Confirm import from another station in the web form and retry.",
-                )
-            normalized = parse_station_chart_settings_payload(payload)
-            ctx.access_store.replace_station_chart_settings(instrument_uuid, normalized, user["username"])
+            normalized = normalize_station_chart_settings_map(raw_settings)
+            get_store().replace_station_chart_settings(instrument_uuid, normalized, user["username"])
+            msg = "Trend chart settings saved"
         except ValueError as e:
-            abort(400, str(e))
-        except json.JSONDecodeError:
-            abort(400, "Invalid JSON file")
-        return redirect(url_for("station_chart_settings", instrument_uuid=instrument_uuid))
+            err = str(e)
+
+    preview = get_station_preview(storage_root, instrument_uuid)
+    snapshot = build_public_station_snapshot(
+        storage_root,
+        instrument_uuid,
+        window="hour",
+        max_points=120,
+        cfg=get_cfg(),
+        access_store=get_store(),
+    )
+    effective_series = {item["key"]: item for item in snapshot.get("series", [])}
+    chart_specs = resolve_station_chart_specs(get_store(), instrument_uuid)
+    return render_template(
+        "stations/station_chart_settings.html",
+        instrument_uuid=instrument_uuid,
+        station_name=preview.get("name") or instrument_uuid,
+        chart_specs=chart_specs,
+        effective_series=effective_series,
+        msg=msg,
+        err=err,
+    )
+
+
+@bp.route("/station/<path:instrument_uuid>/chart-settings/export")
+@login_required
+def station_chart_settings_export(instrument_uuid: str):
+    user = g.user
+    storage_root = storage_root_or_404()
+    instruments = set(available_instruments(storage_root))
+    if instrument_uuid not in instruments:
+        abort(404, "Station not found")
+    if not station_is_controllable(user, instrument_uuid):
+        abort(403)
+
+    payload = export_station_chart_settings_payload(get_store(), instrument_uuid)
+    response = Response(
+        response=json.dumps(payload, indent=2, sort_keys=True),
+        status=200,
+        mimetype="application/json",
+    )
+    response.headers["Content-Disposition"] = (
+        f"attachment; filename={safe_filename(instrument_uuid)}_chart_settings.json"
+    )
+    return response
+
+
+@bp.route("/station/<path:instrument_uuid>/chart-settings/import", methods=["POST"])
+@login_required
+def station_chart_settings_import(instrument_uuid: str):
+    user = g.user
+    storage_root = storage_root_or_404()
+    instruments = set(available_instruments(storage_root))
+    if instrument_uuid not in instruments:
+        abort(404, "Station not found")
+    if not station_is_controllable(user, instrument_uuid):
+        abort(403)
+
+    upload = request.files.get("settings_file")
+    if upload is None or not upload.filename:
+        abort(400, "Missing JSON file")
+    try:
+        payload = json.load(upload.stream)
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid JSON payload")
+        payload_station_uuid = str(payload.get("station_uuid") or "").strip()
+        foreign = payload_station_uuid and payload_station_uuid != instrument_uuid
+        if foreign and not parse_boolish(request.form.get("confirm_foreign_station", "0"), False):
+            abort(
+                400,
+                f"JSON file belongs to station {payload_station_uuid}. "
+                "Confirm import from another station in the web form and retry.",
+            )
+        normalized = parse_station_chart_settings_payload(payload)
+        get_store().replace_station_chart_settings(instrument_uuid, normalized, user["username"])
+    except ValueError as e:
+        abort(400, str(e))
+    except json.JSONDecodeError:
+        abort(400, "Invalid JSON file")
+    return redirect(url_for("stations.station_chart_settings", instrument_uuid=instrument_uuid))

@@ -28,10 +28,10 @@
       <div class="small text-muted">Last update</div>
       <div class="fw-semibold" id="lastUpdate">{{ snapshot.last_timestamp or "-" }}</div>
       {% if can_control %}
-        <a class="btn btn-sm btn-outline-secondary mt-2" href="{{ url_for('station_chart_settings', instrument_uuid=snapshot.instrument_uuid) }}">Trend chart axis settings</a>
+        <a class="btn btn-sm btn-outline-secondary mt-2" href="{{ url_for('stations.station_chart_settings', instrument_uuid=snapshot.instrument_uuid) }}">Trend chart axis settings</a>
       {% endif %}
       {% if can_browse_download %}
-        <a class="btn btn-sm btn-primary mt-2" href="{{ url_for('browse_station', instrument_uuid=snapshot.instrument_uuid) }}">Browse & Download Data</a>
+        <a class="btn btn-sm btn-primary mt-2" href="{{ url_for('stations.browse_station', instrument_uuid=snapshot.instrument_uuid) }}">Browse & Download Data</a>
       {% endif %}
     </div>
   </div>
@@ -43,7 +43,7 @@
   </div>
 
   <script id="pageConfig" type="application/json">{{ {
-    "snapshotUrl": url_for('public_station_snapshot', instrument_uuid=snapshot.instrument_uuid),
+    "snapshotUrl": url_for('public.station_snapshot', instrument_uuid=snapshot.instrument_uuid),
     "selectedWindow": selected_window,
     "selectedFocus": selected_focus,
     "appLogoUrl": app_logo_url,

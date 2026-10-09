@@ -12,11 +12,11 @@
   {% endif %}
   <h1>Sensor Network Collector - Data Portal</h1>
   {% if user %}
-    <p>Logged in as <b>{{ user.username }}</b> ({{ user.role }}) - <a href="{{ url_for('logout') }}">Logout</a></p>
-    <p><a href="{{ url_for('profile') }}">Profile and notifications</a> | <a href="{{ url_for('anomalies_log') }}">Anomalies log</a></p>
-    {% if user.role == 'admin' %}<p><a href="{{ url_for('admin') }}">Admin panel</a></p>{% endif %}
+    <p>Logged in as <b>{{ user.username }}</b> ({{ user.role }}) - <a href="{{ url_for('auth.logout') }}">Logout</a></p>
+    <p><a href="{{ url_for('profile.index') }}">Profile and notifications</a> | <a href="{{ url_for('admin.anomalies_log') }}">Anomalies log</a></p>
+    {% if user.role == 'admin' %}<p><a href="{{ url_for('admin.index') }}">Admin panel</a></p>{% endif %}
   {% else %}
-    <p>{% if web_info_link %}<a href="{{ web_info_link }}" target="_blank" rel="noopener noreferrer">Info</a> | {% endif %}<a href="{{ url_for('login') }}">Login</a> | <a href="{{ url_for('request_account') }}">Request account</a></p>
+    <p>{% if web_info_link %}<a href="{{ web_info_link }}" target="_blank" rel="noopener noreferrer">Info</a> | {% endif %}<a href="{{ url_for('auth.login') }}">Login</a> | <a href="{{ url_for('auth.request_account') }}">Request account</a></p>
   {% endif %}
 
   <div class="panel">
@@ -36,13 +36,13 @@
     {% if not clickable %}
       <p>No stations available with your current permissions.</p>
     {% else %}
-      <form method="post" action="{{ url_for('download') }}">
+      <form method="post" action="{{ url_for('stations.download') }}">
         {% for st in clickable %}
           <label>
             <input type="checkbox" name="instrument" value="{{ st.uuid }}"> {{ st.name }} ({{ st.uuid }})
             (policy={{ st.policy }})
-            <a href="{{ url_for('browse_station', instrument_uuid=st.uuid) }}">browse</a>
-            | <a href="{{ url_for('public_station', instrument_uuid=st.uuid) }}">public view</a>
+            <a href="{{ url_for('stations.browse_station', instrument_uuid=st.uuid) }}">browse</a>
+            | <a href="{{ url_for('public.station', instrument_uuid=st.uuid) }}">public view</a>
           </label><br/>
         {% endfor %}
         <p>Date filter (optional):</p>
@@ -60,7 +60,7 @@
     {% else %}
       <ul>
         {% for st in stations %}
-          <li><a href="{{ url_for('public_station', instrument_uuid=st.uuid) }}">{{ st.name }} ({{ st.uuid }})</a></li>
+          <li><a href="{{ url_for('public.station', instrument_uuid=st.uuid) }}">{{ st.name }} ({{ st.uuid }})</a></li>
         {% endfor %}
       </ul>
     {% endif %}

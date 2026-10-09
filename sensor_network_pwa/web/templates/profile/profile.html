@@ -2,10 +2,10 @@
 {% block title %}Profile{% endblock %}
 {% block body %}
   <p>
-    <a href="{{ url_for('index') }}">Home</a> |
-    <a href="{{ url_for('anomalies_log') }}">Anomalies log</a> |
-    <a href="{{ url_for('change_password') }}">Change password</a> |
-    <a href="{{ url_for('logout') }}">Logout</a>
+    <a href="{{ url_for('public.index') }}">Home</a> |
+    <a href="{{ url_for('admin.anomalies_log') }}">Anomalies log</a> |
+    <a href="{{ url_for('auth.change_password') }}">Change password</a> |
+    <a href="{{ url_for('auth.logout') }}">Logout</a>
   </p>
   <h1 class="h4">Profile</h1>
   {% for category, message in get_flashed_messages(with_categories=true) %}
@@ -22,7 +22,7 @@
     You get an email when a station you can access starts failing and when it is back to regular.
     While the failure persists, a reminder is sent at each notification time.
   </p>
-  <form method="post" action="{{ url_for('profile_notification_interval') }}" class="row g-2 align-items-end mb-3">
+  <form method="post" action="{{ url_for('profile.notification_interval') }}" class="row g-2 align-items-end mb-3">
     <div class="col-auto">
       <label class="form-label" for="notification-minutes">Notification time</label>
       <select class="form-select form-select-sm" id="notification-minutes" name="minutes">
@@ -43,14 +43,14 @@
     {% for n in notifications %}
       <tr>
         <td>{% if n.is_open %}<span class="badge text-bg-danger">Failure</span>{% else %}<span class="badge text-bg-success">Regular</span>{% endif %}</td>
-        <td><a href="{{ url_for('browse_station', instrument_uuid=n.station_uuid) }}">{{ n.station_uuid }}</a></td>
+        <td><a href="{{ url_for('stations.browse_station', instrument_uuid=n.station_uuid) }}">{{ n.station_uuid }}</a></td>
         <td>{{ n.anomaly_type }}{% if n.message %}<div class="small text-muted">{{ n.message }}</div>{% endif %}</td>
         <td>{{ n.failed_at }}</td>
         <td>{{ n.resolved_at }}</td>
         <td>{{ n.last_sent_at }}</td>
         <td>{{ n.state }}</td>
         <td>
-          <form method="post" action="{{ url_for('profile_notification_action', notification_id=n.id) }}" class="d-flex flex-wrap gap-1">
+          <form method="post" action="{{ url_for('profile.notification_action', notification_id=n.id) }}" class="d-flex flex-wrap gap-1">
             {% if n.can_acknowledge %}
               <button class="btn btn-outline-primary btn-sm" type="submit" name="action" value="acknowledge" title="Stop the reminders of this failure">Acknowledge</button>
             {% endif %}

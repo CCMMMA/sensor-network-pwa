@@ -25,12 +25,12 @@
         </div>
         <button class="btn btn-primary" type="submit">Create account</button>
       </form>
-      <p class="mt-3"><a href="{{ url_for('index') }}">Home</a></p>
+      <p class="mt-3"><a href="{{ url_for('public.index') }}">Home</a></p>
     </div>
   </div>
   <script id="pageConfig" type="application/json">{{ {
     "onboardingToken": onboarding_token,
-    "checkUsernameUrl": url_for('check_username'),
+    "checkUsernameUrl": url_for('auth.check_username'),
   } | tojson }}</script>
   <script src="{{ url_for('static', filename='js/account_request_complete.js') }}"></script>
 {% endblock %}

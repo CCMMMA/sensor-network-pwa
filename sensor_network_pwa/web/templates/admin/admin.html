@@ -12,10 +12,10 @@
       <div class="text-muted small">Signed in as <b>{{ admin_user.username }}</b></div>
     </div>
     <div class="d-flex flex-wrap gap-2">
-      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('index') }}">Home</a>
-      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('profile') }}">Profile</a>
-      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('anomalies_log') }}">Anomalies log</a>
-      <a class="btn btn-outline-primary btn-sm" href="{{ url_for('admin_dashboard') }}">Network dashboard</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('public.index') }}">Home</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('profile.index') }}">Profile</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('admin.anomalies_log') }}">Anomalies log</a>
+      <a class="btn btn-outline-primary btn-sm" href="{{ url_for('admin.dashboard') }}">Network dashboard</a>
     </div>
   </div>
 
@@ -63,7 +63,7 @@
       </div>
 
       <div class="collapse mb-3" id="newUser">
-        <form method="post" action="{{ url_for('admin_create_user') }}" class="card card-body">
+        <form method="post" action="{{ url_for('admin.create_user') }}" class="card card-body">
           <h2 class="h6">New user</h2>
           <div class="row g-3">
             <div class="col-md-6 col-lg-3">
@@ -136,7 +136,7 @@
                     {% elif not stations %}
                       <p class="text-muted mb-0">No stations found in storage.</p>
                     {% else %}
-                      <form method="post" action="{{ url_for('admin_set_user_permissions') }}">
+                      <form method="post" action="{{ url_for('admin.set_user_permissions') }}">
                         <input type="hidden" name="username" value="{{ u.username }}">
                         <table class="table table-sm rights-table bg-white border">
                           <thead><tr>
@@ -174,14 +174,14 @@
                   </div>
                   <div class="col-lg-5">
                     <h3 class="h6">Account</h3>
-                    <form method="post" action="{{ url_for('admin_update_user') }}" class="input-group input-group-sm mb-2">
+                    <form method="post" action="{{ url_for('admin.update_user') }}" class="input-group input-group-sm mb-2">
                       <input type="hidden" name="username" value="{{ u.username }}">
                       <input type="hidden" name="action" value="email">
                       <span class="input-group-text">Email</span>
                       <input class="form-control" type="email" name="email" value="{{ u.email or '' }}" aria-label="Email of {{ u.username }}">
                       <button class="btn btn-outline-primary" type="submit">Save</button>
                     </form>
-                    <form method="post" action="{{ url_for('admin_set_password') }}" class="card card-body p-2 mb-2">
+                    <form method="post" action="{{ url_for('admin.set_password') }}" class="card card-body p-2 mb-2">
                       <input type="hidden" name="username" value="{{ u.username }}">
                       <div class="row g-2">
                         <div class="col-sm-6">
@@ -201,7 +201,7 @@
                       <div class="form-text">At least 12 characters with upper and lower case, a digit and a symbol.</div>
                     </form>
                     <div class="d-flex flex-wrap gap-2">
-                      <form method="post" action="{{ url_for('admin_force_password') }}">
+                      <form method="post" action="{{ url_for('admin.force_password') }}">
                         <input type="hidden" name="username" value="{{ u.username }}">
                         {% if u.force_password_change %}
                           <input type="hidden" name="force" value="0">
@@ -211,7 +211,7 @@
                         {% endif %}
                       </form>
                       {% if u.username != admin_user.username %}
-                        <form method="post" action="{{ url_for('admin_update_user') }}">
+                        <form method="post" action="{{ url_for('admin.update_user') }}">
                           <input type="hidden" name="username" value="{{ u.username }}">
                           {% if u.role == 'admin' %}
                             <input type="hidden" name="action" value="make_user">
@@ -221,7 +221,7 @@
                             <button class="btn btn-outline-secondary btn-sm" type="submit" data-confirm="Give {{ u.username }} full administrator rights?">Make administrator</button>
                           {% endif %}
                         </form>
-                        <form method="post" action="{{ url_for('admin_update_user') }}">
+                        <form method="post" action="{{ url_for('admin.update_user') }}">
                           <input type="hidden" name="username" value="{{ u.username }}">
                           {% if u.active %}
                             <input type="hidden" name="action" value="deactivate">
@@ -269,7 +269,7 @@
             </td>
             <td class="small">{{ st.last_timestamp or '-' }}</td>
             <td>
-              <form method="post" action="{{ url_for('admin_set_policy') }}" class="d-flex gap-1">
+              <form method="post" action="{{ url_for('admin.set_policy') }}" class="d-flex gap-1">
                 <input type="hidden" name="instrument_uuid" value="{{ st.uuid }}">
                 <select class="form-select form-select-sm policy-select" name="policy" style="min-width: 8.5rem;" aria-label="Policy of {{ st.name }}">
                   <option value="open" {% if st.policy=='open' %}selected{% endif %}>Open</option>
@@ -284,9 +284,9 @@
               · {{ st.control_count }} chart editor{{ '' if st.control_count == 1 else 's' }}
             </td>
             <td class="text-end text-nowrap">
-              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('public_station', instrument_uuid=st.uuid) }}">Dashboard</a>
-              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('browse_station', instrument_uuid=st.uuid) }}">Data</a>
-              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('station_chart_settings', instrument_uuid=st.uuid) }}">Chart settings</a>
+              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('public.station', instrument_uuid=st.uuid) }}">Dashboard</a>
+              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('stations.browse_station', instrument_uuid=st.uuid) }}">Data</a>
+              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('stations.station_chart_settings', instrument_uuid=st.uuid) }}">Chart settings</a>
               <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#station-{{ loop.index }}">Users</button>
             </td>
           </tr>
@@ -298,7 +298,7 @@
                   {% if not regular_users %}
                     <p class="text-muted mb-0">There are no regular users yet. Administrators already have every right.</p>
                   {% else %}
-                    <form method="post" action="{{ url_for('admin_set_station_permissions') }}" style="max-width: 44rem;">
+                    <form method="post" action="{{ url_for('admin.set_station_permissions') }}" style="max-width: 44rem;">
                       <input type="hidden" name="station_uuid" value="{{ st.uuid }}">
                       <table class="table table-sm rights-table bg-white border">
                         <thead><tr>
@@ -361,10 +361,10 @@
               <div class="small text-muted">Request #{{ r.id }} · {{ r.created_at }}</div>
             </div>
             <div class="d-flex gap-2">
-              <form method="post" action="{{ url_for('admin_approve_request', request_id=r.id) }}">
+              <form method="post" action="{{ url_for('admin.approve_request', request_id=r.id) }}">
                 <button class="btn btn-success btn-sm" type="submit">Approve</button>
               </form>
-              <form method="post" action="{{ url_for('admin_reject_request', request_id=r.id) }}">
+              <form method="post" action="{{ url_for('admin.reject_request', request_id=r.id) }}">
                 <button class="btn btn-outline-danger btn-sm" type="submit" data-confirm="Reject the request from {{ r.email }}?">Reject</button>
               </form>
             </div>
