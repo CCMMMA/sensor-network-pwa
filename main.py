@@ -3,6 +3,7 @@ import csv
 import functools
 import gzip
 import hashlib
+import io
 import json
 import logging
 import math
@@ -18,7 +19,6 @@ import struct
 import sys
 import tempfile
 import threading
-import uuid
 import zipfile
 import zlib
 from contextlib import contextmanager
@@ -1893,248 +1893,6 @@ def normalize_chart_color(value, fallback="#0b57d0"):
     return fallback
 
 
-def hex_to_rgba(hex_color: str, alpha: float):
-    color = normalize_chart_color(hex_color)
-    r = int(color[1:3], 16)
-    g = int(color[3:5], 16)
-    b = int(color[5:7], 16)
-    return f"rgba({r},{g},{b},{alpha})"
-
-
-def parse_station_browser_chart_config(request_args, numeric_cols):
-    numeric_cols = list(numeric_cols or [])
-    numeric_set = set(numeric_cols)
-    out = {"left": [], "right": []}
-    seen = set()
-
-    def _getlist(args, key: str):
-        if hasattr(args, "getlist"):
-            try:
-                return list(args.getlist(key))
-            except Exception:
-                return []
-        if not isinstance(args, dict):
-            return []
-        value = args.get(key)
-        if isinstance(value, list):
-            return value
-        if value is None:
-            return []
-        return [value]
-
-    raw = str(request_args.get("chart_config", "") or "").strip()
-    payload = {}
-    if raw:
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                payload = parsed
-        except Exception:
-            payload = {}
-
-    color_index = 0
-    for side in ("left", "right"):
-        items = payload.get(side)
-        if not isinstance(items, list):
-            continue
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            field = str(item.get("field") or "").strip()
-            if field not in numeric_set or field in seen:
-                continue
-            chart_type = "bar" if str(item.get("type") or "").strip().lower() == "bar" else "line"
-            y_min = _to_float(item.get("min"))
-            y_max = _to_float(item.get("max"))
-            y_step = _to_float(item.get("step"))
-            if y_min is not None and y_max is not None and y_max <= y_min:
-                y_min = None
-                y_max = None
-            if y_step is not None and y_step <= 0:
-                y_step = None
-            color = normalize_chart_color(item.get("color"), DEFAULT_CHART_COLORS[color_index % len(DEFAULT_CHART_COLORS)])
-            out[side].append({"field": field, "type": chart_type, "min": y_min, "max": y_max, "step": y_step, "color": color})
-            seen.add(field)
-            color_index += 1
-
-    legacy_selected = [f for f in _getlist(request_args, "field") if f in numeric_set and f not in seen]
-    if not out["left"] and not out["right"] and legacy_selected:
-        for idx, field in enumerate(legacy_selected):
-            out["left"].append(
-                {
-                    "field": field,
-                    "type": "line",
-                    "min": None,
-                    "max": None,
-                    "step": None,
-                    "color": DEFAULT_CHART_COLORS[idx % len(DEFAULT_CHART_COLORS)],
-                }
-            )
-            seen.add(field)
-
-    if not out["left"] and not out["right"] and numeric_cols:
-        out["left"].append(
-            {
-                "field": numeric_cols[0],
-                "type": "line",
-                "min": None,
-                "max": None,
-                "step": None,
-                "color": DEFAULT_CHART_COLORS[0],
-            }
-        )
-
-    return out
-
-
-def serialize_station_browser_chart_config(chart_config):
-    clean = {"left": [], "right": []}
-    for side in ("left", "right"):
-        for item in chart_config.get(side, []):
-            if not isinstance(item, dict):
-                continue
-            field = str(item.get("field") or "").strip()
-            if not field:
-                continue
-            entry = {"field": field, "type": "bar" if item.get("type") == "bar" else "line"}
-            if item.get("min") is not None:
-                entry["min"] = float(item["min"])
-            if item.get("max") is not None:
-                entry["max"] = float(item["max"])
-            if item.get("step") is not None:
-                entry["step"] = float(item["step"])
-            entry["color"] = normalize_chart_color(item.get("color"), DEFAULT_CHART_COLORS[len(clean[side]) % len(DEFAULT_CHART_COLORS)])
-            clean[side].append(entry)
-    return json.dumps(clean, separators=(",", ":"))
-
-
-def _match_chart_spec_for_field(field: str, resolved_specs):
-    field_l = str(field or "").strip().lower()
-    if not field_l:
-        return None
-    for spec in resolved_specs or []:
-        for alias in spec.get("aliases", []):
-            if str(alias or "").strip().lower() == field_l:
-                return spec
-    return None
-
-
-def build_station_browser_chart_model(rows, chart_config, units_map, resolved_specs=None):
-    labels = [str(row.get("timestamp") or "") for row in rows]
-    datasets = []
-    y_axes = {}
-
-    for side in ("left", "right"):
-        side_items = chart_config.get(side, [])
-        for idx, item in enumerate(side_items):
-            field = item["field"]
-            axis_id = f"{side}_{idx}"
-            unit = units_map.get(field, "")
-            label = f"{field} [{unit or '-'}]"
-            data = []
-            for row in rows:
-                value = _to_float(row.get(field))
-                data.append(None if value is None else round(value, 6))
-            datasets.append(
-                {
-                    "field": field,
-                    "label": label,
-                    "data": data,
-                    "unit": unit,
-                    "type": "bar" if item.get("type") == "bar" else "line",
-                    "yAxisID": axis_id,
-                    "axisSide": side,
-                    "color": normalize_chart_color(item.get("color"), DEFAULT_CHART_COLORS[len(datasets) % len(DEFAULT_CHART_COLORS)]),
-                }
-            )
-            axis_cfg = {
-                "type": "linear",
-                "display": True,
-                "position": side,
-                "title": {"display": True, "text": label},
-                "grid": {"drawOnChartArea": side == "left" and idx == 0},
-                "offset": idx > 0,
-            }
-            effective_min = item.get("min")
-            effective_max = item.get("max")
-            effective_step = item.get("step")
-            if effective_min is None and effective_max is None and effective_step is None:
-                spec = _match_chart_spec_for_field(field, resolved_specs)
-                if spec is not None:
-                    numeric_values = [value for value in data if value is not None]
-                    y_min, y_max, y_step = _calc_axis_settings(numeric_values, spec.get("axis"))
-                    effective_min = y_min
-                    effective_max = y_max
-                    effective_step = y_step
-            if effective_min is not None:
-                axis_cfg["min"] = float(effective_min)
-            if effective_max is not None:
-                axis_cfg["max"] = float(effective_max)
-            if effective_step is not None:
-                axis_cfg["ticks"] = {"stepSize": float(effective_step)}
-            y_axes[axis_id] = axis_cfg
-
-    return labels, datasets, y_axes
-
-
-def build_station_browser_axis_defaults(numeric_series_values, resolved_specs):
-    defaults = {}
-    available_fields = {str(field).strip().lower(): field for field in (numeric_series_values or {}).keys()}
-    for spec in resolved_specs or []:
-        axis_spec = spec.get("axis") or {}
-        for alias in spec.get("aliases", []):
-            alias_key = str(alias or "").strip().lower()
-            field_name = available_fields.get(alias_key, alias)
-            field_values = numeric_series_values.get(field_name, []) if field_name in numeric_series_values else []
-            y_min, y_max, y_step = _calc_axis_settings(field_values, axis_spec)
-            defaults[alias_key] = {
-                "min": y_min,
-                "max": y_max,
-                "step": y_step,
-            }
-    return defaults
-
-
-def parse_station_browser_table_prefs(request_args, request_cookies, instrument_uuid: str, all_columns):
-    raw = str(request_args.get("browser_prefs", "") or "").strip()
-    payload = {}
-    if raw:
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                payload = parsed
-        except Exception:
-            payload = {}
-
-    table = payload.get("table") if isinstance(payload.get("table"), dict) else {}
-    page_size = str(table.get("page_size") or request_args.get("page_size") or "50").strip().lower()
-    if page_size not in ("50", "100", "250", "window"):
-        page_size = "50"
-
-    valid_cols = [c for c in all_columns if c]
-    visible = table.get("visible_columns")
-    if not isinstance(visible, list):
-        visible = valid_cols
-    visible_columns = [c for c in visible if c in valid_cols]
-    if not visible_columns:
-        visible_columns = valid_cols
-
-    return {
-        "page_size": page_size,
-        "visible_columns": visible_columns,
-    }
-
-
-def serialize_station_browser_prefs(chart_config, table_prefs):
-    return json.dumps(
-        {
-            "chart_config": chart_config,
-            "table": table_prefs,
-        },
-        separators=(",", ":"),
-    )
-
-
 def build_table_column_stats(rows, columns):
     stats = []
     for col in columns:
@@ -2161,6 +1919,7 @@ def build_table_column_stats(rows, columns):
                 "max_at": max_sample["timestamp"],
                 "avg": round(avg, 6),
                 "stddev": round(stddev, 6),
+                "count": len(values),
             }
         )
     return stats
@@ -3065,6 +2824,1240 @@ def _run_watchdog_scan(cfg: dict, access_store: AccessStore, storage_root: str):
 
 
 # ----------------------------
+# Station data page
+# ----------------------------
+STATION_BROWSER_INTERVALS = frozenset({code for code, _ in TREND_INTERVALS} | {"custom"})
+STATION_BROWSER_PAGE_SIZES = ("50", "100", "250", "1000")
+STATION_BROWSER_MAX_CUSTOM_DAYS = 31
+
+STATION_BROWSER_TEMPLATE = r"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Station {{ station_name }} ({{ instrument_uuid }})</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    .uuid { font-family: var(--bs-font-monospace); font-size: .8rem; }
+    .param-list { max-height: 24rem; overflow-y: auto; }
+    .param-row { display: flex; align-items: center; gap: .5rem; padding: .2rem .5rem; border-bottom: 1px solid var(--bs-border-color-translucent); }
+    .param-row.plotted { background: var(--bs-primary-bg-subtle); }
+    .param-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: .875rem; }
+    .chart-box { position: relative; height: 24rem; }
+    .series-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .25rem 0; }
+    .series-row input[type=color] { width: 2.2rem; padding: .1rem; }
+    .data-wrap { max-height: 30rem; overflow: auto; }
+    #dataTable { font-size: .78rem; white-space: nowrap; }
+    #dataTable thead th { position: sticky; top: 0; background: var(--bs-light); z-index: 1; }
+    .column-list { max-height: 14rem; overflow-y: auto; columns: 14rem; }
+    .stats-table { font-size: .85rem; }
+  </style>
+  <style id="hiddenColumnStyle"></style>
+</head>
+<body class="bg-light">
+<div class="container-fluid py-3" style="max-width: 1500px;">
+
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div class="d-flex align-items-center gap-3">
+      {% if app_logo_url %}<img src="{{ app_logo_url }}" alt="App logo" style="max-height:48px;">{% endif %}
+      <div>
+        <nav class="small"><a href="{{ url_for('index') }}">Home</a> / Station data</nav>
+        <h1 class="h3 mb-0">{{ station_name }}</h1>
+        <div class="uuid text-muted">{{ instrument_uuid }}</div>
+      </div>
+      {% if station_logo_url %}<img src="{{ station_logo_url }}" alt="Station logo" style="max-height:48px;">{% endif %}
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('public_station', instrument_uuid=instrument_uuid) }}">Live dashboard</a>
+      {% if can_control %}
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('station_chart_settings', instrument_uuid=instrument_uuid) }}">Dashboard axis settings</a>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ------------------------------ Time range ------------------------------ #}
+  <div class="card shadow-sm mb-3" id="intervalPanel"><div class="card-body">
+    <div class="d-flex flex-wrap align-items-end gap-3">
+      <form method="get" id="intervalForm">
+        <label class="form-label mb-1" for="intervalSelect">Time window</label>
+        <select class="form-select form-select-sm" name="interval" id="intervalSelect">
+          {% for code, label in interval_options %}
+            <option value="{{ code }}" {% if code==interval %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+          {% if interval == 'custom' %}<option value="custom" selected disabled>custom dates</option>{% endif %}
+        </select>
+      </form>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Move in time">
+        <a class="btn btn-outline-primary" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, **prev_args) }}">&larr; Earlier</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, **next_args) }}">Later &rarr;</a>
+        <a class="btn btn-outline-primary {% if is_latest and interval != 'custom' %}disabled{% endif %}" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, interval=(interval if interval != 'custom' else 'hour')) }}">Latest</a>
+      </div>
+      <form method="get" class="d-flex flex-wrap align-items-end gap-2 ms-lg-auto">
+        <div>
+          <label class="form-label mb-1" for="fromDate">From (UTC)</label>
+          <input class="form-control form-control-sm" type="date" id="fromDate" name="from_date" value="{{ range_args.get('from_date', '') }}" required>
+        </div>
+        <div>
+          <label class="form-label mb-1" for="toDate">To (UTC)</label>
+          <input class="form-control form-control-sm" type="date" id="toDate" name="to_date" value="{{ range_args.get('to_date', '') }}" required>
+        </div>
+        <button class="btn btn-outline-primary btn-sm" type="submit" title="At most {{ max_custom_days }} days">Show these dates</button>
+      </form>
+    </div>
+    <p class="mb-0 mt-3" id="intervalSummary">
+      <b>{{ total_rows }}</b> rows from <b>{{ win_start }}</b> to <b>{{ win_end }}</b> (UTC).
+      {% if chart_step > 1 %}<span class="text-muted">The chart shows one sample every {{ chart_step }}; the table and the statistics use all {{ total_rows }} rows.</span>{% endif %}
+    </p>
+  </div></div>
+
+  <script id="stationBrowseState" type="application/json">{{ station_browse_state_json|safe }}</script>
+
+  {% if not total_rows %}
+    <div class="alert alert-info">No data in this time range. Use <b>Earlier</b>, <b>Later</b> or <b>Latest</b> to move, or pick other dates.</div>
+  {% else %}
+
+  {# ------------------------------ Chart ------------------------------ #}
+  <div class="card shadow-sm mb-3"><div class="card-body">
+    <h2 class="h5">Chart</h2>
+    {% if not numeric_cols %}
+      <p class="text-muted mb-0">No numeric parameters in this time range.</p>
+    {% else %}
+    <div class="row g-3">
+      <div class="col-lg-4 col-xl-3">
+        <label class="form-label mb-1" for="paramSearch">Parameters</label>
+        <input class="form-control form-control-sm mb-2" id="paramSearch" type="search" placeholder="Search {{ numeric_cols|length }} parameters">
+        <div class="param-list border rounded bg-white" id="paramList"></div>
+        <div class="form-text"><b>L</b> / <b>R</b> plot a parameter on the left or right axis; press again to remove it. Parameters with the same unit share an axis.</div>
+      </div>
+      <div class="col-lg-8 col-xl-9">
+        <div class="chart-box"><canvas id="chart"></canvas></div>
+        <div id="chartEmpty" class="text-muted d-none">Choose a parameter with <b>L</b> or <b>R</b> to plot it.</div>
+
+        <div class="mt-3" id="seriesList"></div>
+        <div class="mt-2" id="axisList"></div>
+
+        <div class="d-flex flex-wrap gap-2 mt-3">
+          <button class="btn btn-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#publicationPanel">Download plot&hellip;</button>
+          <a class="btn btn-outline-primary btn-sm" id="plottedCsvLink" href="#">Plotted data (CSV)</a>
+          <button class="btn btn-outline-secondary btn-sm" type="button" id="chartClearBtn">Clear chart</button>
+          <button class="btn btn-outline-secondary btn-sm ms-auto" type="button" id="chartExportBtn">Save chart setup</button>
+          <label class="btn btn-outline-secondary btn-sm mb-0" for="chartImportFile">Load chart setup</label>
+          <input id="chartImportFile" type="file" accept="application/json,.json" hidden>
+        </div>
+
+        <div class="collapse mt-3" id="publicationPanel">
+          <div class="border rounded p-3 bg-white">
+            <h3 class="h6">Publication-quality plot</h3>
+            <div class="row g-2">
+              <div class="col-sm-6 col-xl-3">
+                <label class="form-label mb-1" for="pubSize">Figure size</label>
+                <select class="form-select form-select-sm" id="pubSize">
+                  <option value="90x60">Single column, 90 &times; 60 mm</option>
+                  <option value="140x85">1.5 columns, 140 &times; 85 mm</option>
+                  <option value="190x100" selected>Double column, 190 &times; 100 mm</option>
+                  <option value="254x143">Slide 16:9, 254 &times; 143 mm</option>
+                </select>
+              </div>
+              <div class="col-sm-6 col-xl-2">
+                <label class="form-label mb-1" for="pubFont">Font</label>
+                <select class="form-select form-select-sm" id="pubFont">
+                  <option value="Helvetica, Arial, sans-serif">Sans-serif (Helvetica)</option>
+                  <option value="'Times New Roman', Times, serif">Serif (Times)</option>
+                </select>
+              </div>
+              <div class="col-sm-6 col-xl-2">
+                <label class="form-label mb-1" for="pubFontSize">Text size</label>
+                <select class="form-select form-select-sm" id="pubFontSize">
+                  <option value="7">7 pt</option>
+                  <option value="8" selected>8 pt</option>
+                  <option value="9">9 pt</option>
+                  <option value="10">10 pt</option>
+                  <option value="12">12 pt</option>
+                </select>
+              </div>
+              <div class="col-sm-6 col-xl-2">
+                <label class="form-label mb-1" for="pubDpi">PNG resolution</label>
+                <select class="form-select form-select-sm" id="pubDpi">
+                  <option value="300">300 dpi</option>
+                  <option value="600" selected>600 dpi</option>
+                  <option value="1200">1200 dpi</option>
+                </select>
+              </div>
+              <div class="col-sm-12 col-xl-3">
+                <label class="form-label mb-1" for="pubTitle">Title (optional)</label>
+                <input class="form-control form-control-sm" id="pubTitle" value="{{ station_name }}">
+              </div>
+            </div>
+            <div class="d-flex flex-wrap gap-3 mt-2">
+              <div class="form-check"><input class="form-check-input" type="checkbox" id="pubLegend" checked><label class="form-check-label" for="pubLegend">Legend</label></div>
+              <div class="form-check"><input class="form-check-input" type="checkbox" id="pubGrid" checked><label class="form-check-label" for="pubGrid">Grid</label></div>
+              <div class="form-check"><input class="form-check-input" type="checkbox" id="pubMono"><label class="form-check-label" for="pubMono">Black and white (line styles instead of colours)</label></div>
+            </div>
+            <div class="d-flex flex-wrap gap-2 mt-3">
+              <button class="btn btn-primary btn-sm" type="button" id="pubSvgBtn">Download SVG (vector)</button>
+              <button class="btn btn-primary btn-sm" type="button" id="pubPngBtn">Download PNG</button>
+            </div>
+            <div class="form-text">SVG is a vector file that stays sharp at any size and can be edited or converted to PDF/EPS; PNG is saved at the chosen resolution with its physical size. Times are UTC.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div></div>
+
+  {# ------------------------------ Data ------------------------------ #}
+  <div class="card shadow-sm mb-3" id="data"><div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+      <h2 class="h5 mb-0">Data</h2>
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-primary btn-sm" id="rangeCsvLink" href="{{ url_for('export_station_csv', instrument_uuid=instrument_uuid, **range_args) }}" data-base="{{ url_for('export_station_csv', instrument_uuid=instrument_uuid, **range_args) }}">Download this range (CSV)</a>
+        <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#zipPanel">Raw files (ZIP)&hellip;</button>
+      </div>
+    </div>
+
+    <div class="collapse mb-3" id="zipPanel">
+      <form method="post" action="{{ url_for('download') }}" class="border rounded p-3 bg-white d-flex flex-wrap align-items-end gap-2">
+        <input type="hidden" name="instrument" value="{{ instrument_uuid }}"/>
+        <div>
+          <label class="form-label mb-1" for="zipFrom">From (UTC)</label>
+          <input class="form-control form-control-sm" type="date" id="zipFrom" name="from_date" value="{{ win_start[:10] }}">
+        </div>
+        <div>
+          <label class="form-label mb-1" for="zipTo">To (UTC)</label>
+          <input class="form-control form-control-sm" type="date" id="zipTo" name="to_date" value="{{ win_end[:10] }}">
+        </div>
+        <button class="btn btn-primary btn-sm" type="submit">Download ZIP</button>
+        <div class="form-text w-100">The original hourly CSV files of the station, for any period. Leave both dates empty for the whole archive.</div>
+      </form>
+    </div>
+
+    <div class="d-flex flex-wrap align-items-end gap-3 mb-2">
+      <form method="get" action="{{ url_for('browse_station', instrument_uuid=instrument_uuid) }}#data" id="tablePrefsForm" class="d-flex flex-wrap align-items-end gap-2">
+        {% for key, value in range_args.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+        <div>
+          <label class="form-label mb-1" for="tablePageSize">Rows per page</label>
+          <select class="form-select form-select-sm" id="tablePageSize" name="page_size">
+            {% for size in page_sizes %}<option value="{{ size }}" {% if size|int == page_size %}selected{% endif %}>{{ size }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="form-label mb-1" for="tableOrder">Order</label>
+          <select class="form-select form-select-sm" id="tableOrder" name="order">
+            <option value="asc" {% if order == 'asc' %}selected{% endif %}>Oldest first</option>
+            <option value="desc" {% if order == 'desc' %}selected{% endif %}>Newest first</option>
+          </select>
+        </div>
+        <noscript><button class="btn btn-outline-primary btn-sm" type="submit">Apply</button></noscript>
+      </form>
+      <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#columnPanel">Columns <span class="badge text-bg-secondary" id="columnCount"></span></button>
+      <nav class="ms-auto" aria-label="Table pages">
+        {% set page_args = dict(range_args, page_size=page_size, order=order) %}
+        <ul class="pagination pagination-sm mb-0">
+          <li class="page-item {% if page <= 1 %}disabled{% endif %}"><a class="page-link" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, page=1, **page_args) }}#data">First</a></li>
+          <li class="page-item {% if page <= 1 %}disabled{% endif %}"><a class="page-link" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, page=page-1, **page_args) }}#data">Previous</a></li>
+          <li class="page-item disabled"><span class="page-link">Page {{ page }} of {{ page_count }}</span></li>
+          <li class="page-item {% if page >= page_count %}disabled{% endif %}"><a class="page-link" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, page=page+1, **page_args) }}#data">Next</a></li>
+          <li class="page-item {% if page >= page_count %}disabled{% endif %}"><a class="page-link" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, page=page_count, **page_args) }}#data">Last</a></li>
+        </ul>
+      </nav>
+    </div>
+
+    <div class="collapse mb-2" id="columnPanel">
+      <div class="border rounded p-2 bg-white">
+        <div class="d-flex gap-2 mb-2">
+          <button class="btn btn-outline-secondary btn-sm" type="button" id="columnsAll">Show all</button>
+          <button class="btn btn-outline-secondary btn-sm" type="button" id="columnsPlotted">Only timestamp and plotted</button>
+          <span class="form-text">The CSV of this range contains the columns shown here.</span>
+        </div>
+        <div class="column-list">
+          {% for c in all_table_columns %}
+            <div class="form-check">
+              <input class="form-check-input column-toggle" type="checkbox" id="col-{{ loop.index0 }}" data-index="{{ loop.index0 }}" value="{{ c }}" checked>
+              <label class="form-check-label small" for="col-{{ loop.index0 }}">{{ c }}</label>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="small text-muted mb-1">Rows {{ start_idx + 1 }}&ndash;{{ end_idx }} of {{ total_rows }}</div>
+    <div class="data-wrap border rounded bg-white" id="tableWrap">
+      <table class="table table-sm table-striped table-hover mb-0" id="dataTable">
+        <thead><tr>
+          {% for c in all_table_columns %}
+            <th class="c{{ loop.index0 }}">{{ c }}{% if c in numeric_cols and units_map.get(c) %} <span class="text-muted fw-normal">[{{ units_map.get(c) }}]</span>{% endif %}</th>
+          {% endfor %}
+        </tr></thead>
+        <tbody>
+          {% for r in table_rows %}
+            <tr>{% for c in all_table_columns %}<td class="c{{ loop.index0 }}">{{ r.get(c) if r.get(c) is not none else '' }}</td>{% endfor %}</tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div></div>
+
+  {# ------------------------------ Statistics ------------------------------ #}
+  <div class="card shadow-sm mb-3" id="statisticsSection"><div class="card-body">
+    <h2 class="h5">Statistics of this range</h2>
+    {% if table_column_stats %}
+      <div class="table-responsive">
+      <table class="table table-sm table-hover stats-table mb-0">
+        <thead><tr><th>Parameter</th><th>Unit</th><th class="text-end">Samples</th><th class="text-end">Minimum</th><th>at</th><th class="text-end">Maximum</th><th>at</th><th class="text-end">Mean</th><th class="text-end">Std. deviation</th></tr></thead>
+        <tbody>
+          {% for stat in table_column_stats %}
+            <tr>
+              <td>{{ stat.column }}</td>
+              <td>{{ units_map.get(stat.column, '') }}</td>
+              <td class="text-end">{{ stat.count }}</td>
+              <td class="text-end">{{ stat.min }}</td><td class="text-muted">{{ stat.min_at or '-' }}</td>
+              <td class="text-end">{{ stat.max }}</td><td class="text-muted">{{ stat.max_at or '-' }}</td>
+              <td class="text-end">{{ stat.avg }}</td>
+              <td class="text-end">{{ stat.stddev }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    {% else %}
+      <p class="text-muted mb-0">No numeric parameters in this time range.</p>
+    {% endif %}
+  </div></div>
+  {% endif %}
+
+  {% if user %}
+  <div class="card shadow-sm mb-3"><div class="card-body">
+    <h2 class="h6">Station logo</h2>
+    <form method="post" action="{{ url_for('upload_station_logo', instrument_uuid=instrument_uuid) }}" enctype="multipart/form-data" class="d-flex flex-wrap gap-2">
+      <input class="form-control form-control-sm w-auto" type="file" name="logo" accept="image/*" required>
+      <button class="btn btn-outline-secondary btn-sm" type="submit">Upload logo</button>
+    </form>
+  </div></div>
+  {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+(function () {
+  const stationUuid = {{ instrument_uuid | tojson }};
+  const defaultColors = {{ default_chart_colors | tojson }};
+  const winStart = Date.parse({{ win_start | tojson }});
+  const winEnd = Date.parse({{ win_end | tojson }});
+  let state = {};
+  try {
+    state = JSON.parse(document.getElementById('stationBrowseState').textContent || '{}');
+  } catch (_) {
+    state = {};
+  }
+  const labels = Array.isArray(state.chart_labels) ? state.chart_labels : [];
+  const times = labels.map((label) => Date.parse(label));
+  const seriesValues = state.numeric_series_aligned || {};
+  const units = state.units_map || {};
+  const numericCols = Array.isArray(state.numeric_cols) ? state.numeric_cols : [];
+  const tableColumns = Array.isArray(state.all_table_columns) ? state.all_table_columns : [];
+  const el = (id) => document.getElementById(id);
+
+  function setCookie(name, value) {
+    document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=31536000; samesite=lax`;
+  }
+  function readStored(key) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+  function writeStored(key, value) {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    } catch (_) {
+      // The page works without localStorage; the choice is just not remembered.
+    }
+  }
+  function download(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function compactTime(ms) {
+    return new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  }
+  const fileStem = `${stationUuid.replace(/[^A-Za-z0-9._-]+/g, '_')}_${compactTime(winStart)}_${compactTime(winEnd)}`;
+
+  // ---------------------------------------------------------------- time range and table controls
+  const intervalSelect = el('intervalSelect');
+  if (intervalSelect) {
+    intervalSelect.addEventListener('change', () => {
+      setCookie('station_trend_window', intervalSelect.value);
+      intervalSelect.form.requestSubmit();
+    });
+  }
+  [['tablePageSize', 'station_page_size'], ['tableOrder', 'station_row_order']].forEach(([id, cookie]) => {
+    const select = el(id);
+    if (!select) return;
+    select.addEventListener('change', () => {
+      setCookie(cookie, select.value);
+      select.form.requestSubmit();
+    });
+  });
+
+  // ---------------------------------------------------------------- chart setup (remembered per station)
+  const chartStorageKey = `station_chart_config:${stationUuid}`;
+  const chartConfig = { left: [], right: [] };
+
+  function unitOf(field) {
+    return units[field] || '';
+  }
+  function fieldLabel(field) {
+    return unitOf(field) ? `${field} [${unitOf(field)}]` : field;
+  }
+  function numberOrNull(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  function plottedItems() {
+    return [...chartConfig.left, ...chartConfig.right];
+  }
+  function nextColor() {
+    const used = new Set(plottedItems().map((item) => item.color));
+    return defaultColors.find((color) => !used.has(color)) || defaultColors[plottedItems().length % defaultColors.length];
+  }
+  function newItem(field) {
+    // Axis ranges start automatic, so they follow the data when the time range changes.
+    return { field, type: 'line', color: nextColor(), min: null, max: null, step: null };
+  }
+  function loadChartConfig(source) {
+    chartConfig.left = [];
+    chartConfig.right = [];
+    const seen = new Set();
+    ['left', 'right'].forEach((side) => {
+      const items = source && Array.isArray(source[side]) ? source[side] : [];
+      items.forEach((raw) => {
+        if (!raw || typeof raw !== 'object') return;
+        const field = String(raw.field || '');
+        if (!numericCols.includes(field) || seen.has(field)) return;
+        seen.add(field);
+        const step = numberOrNull(raw.step);
+        chartConfig[side].push({
+          field,
+          type: raw.type === 'bar' ? 'bar' : 'line',
+          color: /^#[0-9a-fA-F]{6}$/.test(String(raw.color || '')) ? String(raw.color).toLowerCase() : nextColor(),
+          min: numberOrNull(raw.min),
+          max: numberOrNull(raw.max),
+          step: step !== null && step > 0 ? step : null
+        });
+      });
+    });
+  }
+  function saveChartConfig() {
+    writeStored(chartStorageKey, chartConfig);
+  }
+
+  const stored = readStored(chartStorageKey);
+  if (stored && typeof stored === 'object') {
+    loadChartConfig(stored);
+  } else {
+    // First visit: start from the usual pair, or from the first parameter.
+    const pick = (names) => names.find((name) => numericCols.includes(name));
+    const first = pick(['TempOut', 'temp', 'temperature']) || numericCols[0];
+    const second = pick(['HumOut', 'hum', 'humidity']);
+    if (first) chartConfig.left.push(newItem(first));
+    if (second && second !== first) chartConfig.right.push(newItem(second));
+  }
+
+  // ---------------------------------------------------------------- axes: one per unit and side
+  function niceStep(rough) {
+    if (!(rough > 0)) return 1;
+    const exponent = Math.floor(Math.log10(rough));
+    const fraction = rough / (10 ** exponent);
+    const nice = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
+    return nice * (10 ** exponent);
+  }
+  function axisGroups() {
+    const groups = [];
+    ['left', 'right'].forEach((side) => {
+      chartConfig[side].forEach((item) => {
+        const unit = unitOf(item.field);
+        // Parameters without a unit cannot be assumed comparable: each gets its own axis.
+        let group = unit ? groups.find((g) => g.side === side && g.unit === unit) : null;
+        if (!group) {
+          group = { id: `y${groups.length}`, side, unit, items: [] };
+          groups.push(group);
+        }
+        group.items.push(item);
+      });
+    });
+    groups.forEach((group) => {
+      const explicit = (key) => {
+        const item = group.items.find((it) => it[key] !== null && it[key] !== undefined);
+        return item ? item[key] : null;
+      };
+      let lo = Infinity;
+      let hi = -Infinity;
+      group.items.forEach((item) => {
+        (seriesValues[item.field] || []).forEach((v) => {
+          if (v === null || v === undefined) return;
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
+        });
+      });
+      if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
+      if (lo === hi) { const pad = Math.max(1, Math.abs(lo) * 0.1); lo -= pad; hi += pad; }
+      const exMin = explicit('min');
+      const exMax = explicit('max');
+      const exStep = explicit('step');
+      const spanLo = exMin !== null ? exMin : lo;
+      const spanHi = exMax !== null ? exMax : hi;
+      // A step that would draw more than 40 ticks is ignored.
+      const stepFits = exStep !== null && exStep > 0 && (spanHi - spanLo) / exStep <= 40;
+      const step = stepFits ? exStep : niceStep(Math.max(spanHi - spanLo, 1e-9) / 5);
+      let min = exMin !== null ? exMin : Math.floor(lo / step) * step;
+      let max = exMax !== null ? exMax : Math.ceil(hi / step) * step;
+      if (!(max > min)) max = min + step;
+      group.min = Number(min.toPrecision(12));
+      group.max = Number(max.toPrecision(12));
+      group.step = step;
+      group.explicit = { min: exMin, max: exMax, step: exStep };
+      group.label = group.items.length === 1 ? fieldLabel(group.items[0].field) : group.unit;
+    });
+    return groups;
+  }
+  function decimalsFor(step) {
+    return Math.min(6, Math.max(0, -Math.floor(Math.log10(step) + 1e-9)));
+  }
+
+  // ---------------------------------------------------------------- time axis
+  const TIME_STEPS = [1, 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400, 172800, 604800]
+    .map((seconds) => seconds * 1000);
+  function timeTicks(min, max, maxCount) {
+    const span = max - min;
+    if (!(span > 0)) return { step: 0, values: [] };
+    const step = TIME_STEPS.find((s) => span / s <= Math.max(2, maxCount)) || TIME_STEPS[TIME_STEPS.length - 1];
+    const values = [];
+    for (let t = Math.ceil(min / step) * step; t <= max; t += step) values.push(t);
+    return { step, values };
+  }
+  function timeLabel(ms, step, previousMs) {
+    const iso = new Date(ms).toISOString();
+    const day = iso.slice(0, 10);
+    if (step >= 86400000) return [day];
+    const time = step < 60000 ? iso.slice(11, 19) : iso.slice(11, 16);
+    const dayChanged = previousMs === null || new Date(previousMs).toISOString().slice(0, 10) !== day;
+    return dayChanged ? [time, day] : [time];
+  }
+
+  // ---------------------------------------------------------------- Chart.js model (screen and PNG)
+  const DASHES = [[], [6, 3], [2, 2], [8, 3, 2, 3], [1, 3], [10, 4]];
+  function buildChartConfig(pub) {
+    const groups = axisGroups();
+    const mono = Boolean(pub && pub.mono);
+    const datasets = [];
+    groups.forEach((group) => {
+      group.items.forEach((item) => {
+        const color = mono ? '#000000' : item.color;
+        const values = seriesValues[item.field] || [];
+        datasets.push({
+          type: item.type === 'bar' ? 'bar' : 'line',
+          label: fieldLabel(item.field),
+          data: times.map((t, i) => ({ x: t, y: values[i] === undefined ? null : values[i] })),
+          borderColor: color,
+          backgroundColor: item.type === 'bar' ? (mono ? '#00000055' : `${item.color}99`) : color,
+          borderWidth: item.type === 'bar' ? 0 : (pub ? 1 : 1.5),
+          borderDash: mono && item.type !== 'bar' ? DASHES[datasets.length % DASHES.length] : [],
+          pointRadius: 0,
+          pointHoverRadius: pub ? 0 : 3,
+          pointStyle: item.type === 'bar' ? 'rect' : 'line',
+          // Bars are drawn first, so lines stay readable on top of them.
+          order: item.type === 'bar' ? 1 : 0,
+          spanGaps: true,
+          tension: 0,
+          yAxisID: group.id
+        });
+      });
+    });
+    const ink = pub ? '#000000' : undefined;
+    // Set on every text element: a chart-level font does not reach them all.
+    const font = pub ? { family: pub.fontFamily, size: pub.fontPx } : undefined;
+    const legendEntries = datasets.map((dataset) => ({
+      label: dataset.label,
+      bar: dataset.type === 'bar',
+      color: dataset.borderColor,
+      fill: dataset.backgroundColor,
+      dash: dataset.borderDash
+    }));
+    const header = pub ? publicationHeader(pub, legendEntries) : null;
+    const gridColor = pub ? '#d9d9d9' : undefined;
+    const showGrid = pub ? pub.grid : true;
+    let xStep = 0;
+    const scales = {
+      x: {
+        type: 'linear',
+        min: winStart,
+        max: winEnd,
+        offset: false,
+        title: { display: true, text: 'Time (UTC)', color: ink, font },
+        grid: { display: showGrid, color: gridColor },
+        border: { color: ink },
+        afterBuildTicks: (axis) => {
+          const ticks = timeTicks(axis.min, axis.max, Math.floor(axis.width / (pub ? pub.fontPx * 7 : 90)));
+          xStep = ticks.step;
+          axis.ticks = ticks.values.map((value) => ({ value }));
+        },
+        ticks: {
+          color: ink,
+          font,
+          maxRotation: 0,
+          autoSkip: false,
+          callback: (value, index, ticks) => timeLabel(value, xStep, index > 0 ? ticks[index - 1].value : null)
+        }
+      }
+    };
+    groups.forEach((group, index) => {
+      const decimals = decimalsFor(group.step);
+      scales[group.id] = {
+        type: 'linear',
+        position: group.side,
+        min: group.min,
+        max: group.max,
+        title: { display: true, text: group.label, color: ink, font },
+        border: { color: ink },
+        grid: { display: showGrid, color: gridColor, drawOnChartArea: index === 0 },
+        ticks: { color: ink, font, stepSize: group.step, callback: (value) => Number(value).toFixed(decimals) }
+      };
+    });
+    return {
+      type: 'line',
+      data: { datasets },
+      options: {
+        responsive: !pub,
+        maintainAspectRatio: false,
+        animation: false,
+        parsing: false,
+        normalized: true,
+        devicePixelRatio: pub ? pub.dpi / 96 : undefined,
+        color: ink,
+        layout: { padding: { top: header ? header.height : 0 } },
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          // The publication plot draws its own title and legend (see publicationHeader).
+          legend: { display: !pub && datasets.length > 1, labels: { usePointStyle: true, pointStyleWidth: 28 } },
+          tooltip: {
+            enabled: !pub,
+            callbacks: {
+              title: (items) => (items.length ? new Date(items[0].parsed.x).toISOString().replace('.000Z', 'Z') : '')
+            }
+          }
+        },
+        scales
+      },
+      plugins: pub ? [{
+        id: 'publicationFrame',
+        beforeDraw: (chart) => {
+          const ctx = chart.ctx;
+          ctx.save();
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, chart.width, chart.height);
+          ctx.restore();
+        },
+        afterDraw: (chart) => header.draw(chart.ctx, chart.chartArea.left, chart.chartArea.right, chart.width)
+      }] : []
+    };
+  }
+
+  // Title and legend of the publication PNG: dashed line samples and bar swatches,
+  // laid out like the SVG export.
+  function publicationHeader(pub, entries) {
+    const fs = pub.fontPx;
+    const rowHeight = fs * 1.5;
+    const titleHeight = pub.title ? fs * 1.5 : 0;
+    const available = pub.widthPx - fs * 8;
+    const measure = document.createElement('canvas').getContext('2d');
+    measure.font = `${fs}px ${pub.fontFamily}`;
+    const rows = [[]];
+    if (pub.legend) {
+      let cursor = 0;
+      entries.forEach((entry) => {
+        const width = fs * 2.6 + measure.measureText(entry.label).width + fs;
+        if (cursor + width > available && rows[rows.length - 1].length) {
+          rows.push([]);
+          cursor = 0;
+        }
+        rows[rows.length - 1].push({ entry, x: cursor, width });
+        cursor += width;
+      });
+    }
+    const legendHeight = pub.legend ? rows.length * rowHeight : 0;
+    return {
+      height: titleHeight + legendHeight + fs * 0.4,
+      draw(ctx, left, right, fullWidth) {
+        ctx.save();
+        ctx.fillStyle = '#000000';
+        ctx.textBaseline = 'alphabetic';
+        if (pub.title) {
+          ctx.font = `bold ${fs}px ${pub.fontFamily}`;
+          ctx.textAlign = 'center';
+          ctx.fillText(pub.title, fullWidth / 2, fs * 1.1);
+        }
+        ctx.font = `${fs}px ${pub.fontFamily}`;
+        ctx.textAlign = 'left';
+        if (pub.legend) {
+          rows.forEach((row, rowIndex) => {
+            const rowWidth = row.reduce((sum, cell) => sum + cell.width, 0);
+            const startX = left + Math.max(0, (right - left - rowWidth) / 2);
+            const y = titleHeight + rowIndex * rowHeight + fs;
+            row.forEach((cell) => {
+              const x = startX + cell.x;
+              if (cell.entry.bar) {
+                ctx.fillStyle = cell.entry.fill;
+                ctx.fillRect(x, y - fs * 0.7, fs * 2, fs * 0.7);
+              } else {
+                ctx.beginPath();
+                ctx.strokeStyle = cell.entry.color;
+                ctx.lineWidth = 1.2;
+                ctx.setLineDash(cell.entry.dash || []);
+                ctx.moveTo(x, y - fs * 0.35);
+                ctx.lineTo(x + fs * 2, y - fs * 0.35);
+                ctx.stroke();
+                ctx.setLineDash([]);
+              }
+              ctx.fillStyle = '#000000';
+              ctx.fillText(cell.entry.label, x + fs * 2.4, y);
+            });
+          });
+        }
+        ctx.restore();
+      }
+    };
+  }
+
+  const chartCanvas = el('chart');
+  let stationChart = null;
+  function renderChart() {
+    if (!chartCanvas || !window.Chart) return;
+    const hasSeries = plottedItems().length > 0;
+    el('chartEmpty').classList.toggle('d-none', hasSeries);
+    chartCanvas.parentElement.classList.toggle('d-none', !hasSeries);
+    if (stationChart) {
+      stationChart.destroy();
+      stationChart = null;
+    }
+    if (hasSeries) stationChart = new Chart(chartCanvas, buildChartConfig(null));
+  }
+
+  // ---------------------------------------------------------------- parameter picker
+  function sideOf(field) {
+    if (chartConfig.left.some((item) => item.field === field)) return 'left';
+    if (chartConfig.right.some((item) => item.field === field)) return 'right';
+    return null;
+  }
+  function setSide(field, side) {
+    const current = sideOf(field);
+    let item = null;
+    if (current) {
+      item = chartConfig[current].find((it) => it.field === field);
+      chartConfig[current] = chartConfig[current].filter((it) => it.field !== field);
+    }
+    if (side && side !== current) chartConfig[side].push(item || newItem(field));
+    refreshChartUi();
+  }
+  function renderParamList() {
+    const list = el('paramList');
+    if (!list) return;
+    const term = (el('paramSearch').value || '').trim().toLowerCase();
+    list.textContent = '';
+    const matching = numericCols.filter((field) => !term || fieldLabel(field).toLowerCase().includes(term));
+    // Plotted parameters first, so the current selection is always in view.
+    matching.sort((a, b) => Number(Boolean(sideOf(b))) - Number(Boolean(sideOf(a))));
+    matching.forEach((field) => {
+      const side = sideOf(field);
+      const row = document.createElement('div');
+      row.className = `param-row${side ? ' plotted' : ''}`;
+      const name = document.createElement('span');
+      name.className = 'param-name';
+      name.textContent = fieldLabel(field);
+      const group = document.createElement('div');
+      group.className = 'btn-group btn-group-sm';
+      [['left', 'L', 'left axis'], ['right', 'R', 'right axis']].forEach(([target, text, title]) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `btn ${side === target ? 'btn-primary' : 'btn-outline-secondary'}`;
+        button.textContent = text;
+        button.title = side === target ? `Remove ${field} from the chart` : `Plot ${field} on the ${title}`;
+        button.setAttribute('aria-pressed', side === target ? 'true' : 'false');
+        button.addEventListener('click', () => setSide(field, target));
+        group.appendChild(button);
+      });
+      row.append(name, group);
+      list.appendChild(row);
+    });
+    if (!matching.length) {
+      const empty = document.createElement('div');
+      empty.className = 'text-muted small p-2';
+      empty.textContent = 'No parameter matches the search.';
+      list.appendChild(empty);
+    }
+  }
+
+  function renderSeriesList() {
+    const list = el('seriesList');
+    if (!list) return;
+    list.textContent = '';
+    ['left', 'right'].forEach((side) => {
+      chartConfig[side].forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'series-row border-bottom';
+        const color = document.createElement('input');
+        color.type = 'color';
+        color.className = 'form-control form-control-sm form-control-color';
+        color.value = item.color;
+        color.title = `Colour of ${item.field}`;
+        color.addEventListener('change', () => { item.color = color.value; refreshChartUi(false); });
+        const name = document.createElement('span');
+        name.className = 'fw-semibold small flex-grow-1';
+        name.textContent = fieldLabel(item.field);
+        const type = document.createElement('select');
+        type.className = 'form-select form-select-sm w-auto';
+        type.setAttribute('aria-label', `Chart type of ${item.field}`);
+        [['line', 'Line'], ['bar', 'Bars']].forEach(([value, text]) => type.add(new Option(text, value, false, item.type === value)));
+        type.addEventListener('change', () => { item.type = type.value; refreshChartUi(false); });
+        const axis = document.createElement('select');
+        axis.className = 'form-select form-select-sm w-auto';
+        axis.setAttribute('aria-label', `Axis of ${item.field}`);
+        [['left', 'Left axis'], ['right', 'Right axis']].forEach(([value, text]) => axis.add(new Option(text, value, false, side === value)));
+        axis.addEventListener('change', () => setSide(item.field, axis.value));
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn btn-outline-danger btn-sm';
+        remove.textContent = 'Remove';
+        remove.addEventListener('click', () => setSide(item.field, null));
+        row.append(color, name, type, axis, remove);
+        list.appendChild(row);
+      });
+    });
+  }
+
+  function renderAxisList() {
+    const list = el('axisList');
+    if (!list) return;
+    list.textContent = '';
+    axisGroups().forEach((group) => {
+      const row = document.createElement('div');
+      row.className = 'series-row';
+      const name = document.createElement('span');
+      name.className = 'small text-muted flex-grow-1';
+      name.textContent = `${group.side === 'left' ? 'Left' : 'Right'} axis · ${group.label || 'no unit'}`;
+      row.appendChild(name);
+      const decimals = decimalsFor(group.step);
+      [['min', 'Min', group.min.toFixed(decimals)], ['max', 'Max', group.max.toFixed(decimals)], ['step', 'Step', String(group.step)]]
+        .forEach(([key, text, auto]) => {
+          const wrap = document.createElement('div');
+          wrap.className = 'input-group input-group-sm w-auto';
+          const tag = document.createElement('span');
+          tag.className = 'input-group-text';
+          tag.textContent = text;
+          const input = document.createElement('input');
+          input.type = 'number';
+          input.step = 'any';
+          input.className = 'form-control';
+          input.style.width = '6.5rem';
+          input.placeholder = `auto (${auto})`;
+          input.setAttribute('aria-label', `${text} of the ${name.textContent}`);
+          if (group.explicit[key] !== null) input.value = group.explicit[key];
+          input.addEventListener('change', () => {
+            let value = numberOrNull(input.value);
+            if (key === 'step' && value !== null && value <= 0) value = null;
+            // The range belongs to the axis, so every series on it carries the same values.
+            group.items.forEach((item) => { item[key] = value; });
+            refreshChartUi(false);
+            renderAxisList();
+          });
+          wrap.append(tag, input);
+          row.appendChild(wrap);
+        });
+      const auto = document.createElement('button');
+      auto.type = 'button';
+      auto.className = 'btn btn-outline-secondary btn-sm';
+      auto.textContent = 'Auto range';
+      auto.addEventListener('click', () => {
+        group.items.forEach((item) => { item.min = null; item.max = null; item.step = null; });
+        refreshChartUi(false);
+        renderAxisList();
+      });
+      row.appendChild(auto);
+      list.appendChild(row);
+    });
+  }
+
+  function updateCsvLinks() {
+    const hidden = hiddenColumns();
+    const range = el('rangeCsvLink');
+    if (range) {
+      const url = new URL(range.dataset.base, window.location.origin);
+      if (hidden.size) tableColumns.filter((c) => !hidden.has(c)).forEach((c) => url.searchParams.append('col', c));
+      range.href = url.pathname + url.search;
+    }
+    const plotted = el('plottedCsvLink');
+    if (plotted && range) {
+      const url = new URL(range.dataset.base, window.location.origin);
+      const fields = plottedItems().map((item) => item.field);
+      ['timestamp', ...fields].forEach((c) => url.searchParams.append('col', c));
+      plotted.href = url.pathname + url.search;
+      plotted.classList.toggle('disabled', fields.length === 0);
+    }
+  }
+
+  function refreshChartUi(rebuildLists = true) {
+    saveChartConfig();
+    if (rebuildLists) {
+      renderParamList();
+      renderSeriesList();
+    }
+    renderAxisList();
+    renderChart();
+    updateCsvLinks();
+  }
+
+  if (el('paramSearch')) el('paramSearch').addEventListener('input', renderParamList);
+  if (el('chartClearBtn')) {
+    el('chartClearBtn').addEventListener('click', () => {
+      chartConfig.left = [];
+      chartConfig.right = [];
+      refreshChartUi();
+    });
+  }
+  if (el('chartExportBtn')) {
+    el('chartExportBtn').addEventListener('click', () => {
+      const payload = { instrument_uuid: stationUuid, exported_at: new Date().toISOString(), chart_config: chartConfig };
+      download(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), `${fileStem.split('_')[0]}_chart_setup.json`);
+    });
+  }
+  if (el('chartImportFile')) {
+    el('chartImportFile').addEventListener('change', async (event) => {
+      const input = event.target;
+      const file = input.files && input.files[0];
+      if (!file) return;
+      try {
+        const payload = JSON.parse(await file.text());
+        if (!payload || typeof payload.chart_config !== 'object') throw new Error('invalid');
+        loadChartConfig(payload.chart_config);
+        refreshChartUi();
+      } catch (_) {
+        window.alert('This file is not a chart setup saved from this page.');
+      } finally {
+        input.value = '';
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------- table columns (remembered per station)
+  const columnStorageKey = `station_hidden_columns:${stationUuid}`;
+  const columnToggles = Array.from(document.querySelectorAll('.column-toggle'));
+  function hiddenColumns() {
+    return new Set(columnToggles.filter((toggle) => !toggle.checked).map((toggle) => toggle.value));
+  }
+  function applyColumns(remember = true) {
+    const rules = columnToggles
+      .filter((toggle) => !toggle.checked)
+      .map((toggle) => `#dataTable .c${toggle.dataset.index}{display:none}`);
+    el('hiddenColumnStyle').textContent = rules.join('\n');
+    const count = el('columnCount');
+    if (count) count.textContent = `${columnToggles.length - rules.length}/${columnToggles.length}`;
+    if (remember) writeStored(columnStorageKey, Array.from(hiddenColumns()));
+    updateCsvLinks();
+  }
+  const storedHidden = readStored(columnStorageKey);
+  if (Array.isArray(storedHidden)) {
+    const hide = new Set(storedHidden);
+    columnToggles.forEach((toggle) => { toggle.checked = !hide.has(toggle.value); });
+    if (columnToggles.length && columnToggles.every((toggle) => !toggle.checked)) {
+      columnToggles.forEach((toggle) => { toggle.checked = true; });
+    }
+  }
+  columnToggles.forEach((toggle) => toggle.addEventListener('change', () => applyColumns()));
+  if (el('columnsAll')) {
+    el('columnsAll').addEventListener('click', () => {
+      columnToggles.forEach((toggle) => { toggle.checked = true; });
+      applyColumns();
+    });
+  }
+  if (el('columnsPlotted')) {
+    el('columnsPlotted').addEventListener('click', () => {
+      const keep = new Set(['timestamp', ...plottedItems().map((item) => item.field)]);
+      columnToggles.forEach((toggle) => { toggle.checked = keep.has(toggle.value); });
+      applyColumns();
+    });
+  }
+
+  // ---------------------------------------------------------------- publication export
+  function publicationSettings() {
+    const [widthMm, heightMm] = el('pubSize').value.split('x').map(Number);
+    const fontPt = Number(el('pubFontSize').value);
+    return {
+      widthMm,
+      heightMm,
+      widthPx: (widthMm / 25.4) * 96,
+      heightPx: (heightMm / 25.4) * 96,
+      fontPt,
+      fontPx: (fontPt * 96) / 72,
+      fontFamily: el('pubFont').value,
+      dpi: Number(el('pubDpi').value),
+      title: el('pubTitle').value.trim(),
+      legend: el('pubLegend').checked,
+      grid: el('pubGrid').checked,
+      mono: el('pubMono').checked
+    };
+  }
+
+  // PNG files carry their resolution in a pHYs chunk; the canvas does not write one.
+  function crc32(bytes) {
+    let crc = -1;
+    for (let i = 0; i < bytes.length; i += 1) {
+      crc ^= bytes[i];
+      for (let k = 0; k < 8; k += 1) crc = (crc >>> 1) ^ (0xEDB88320 & -(crc & 1));
+    }
+    return (crc ^ -1) >>> 0;
+  }
+  function withPngResolution(png, dpi) {
+    const pixelsPerMetre = Math.round(dpi / 0.0254);
+    const chunk = new Uint8Array(21);
+    const view = new DataView(chunk.buffer);
+    view.setUint32(0, 9);
+    chunk.set([0x70, 0x48, 0x59, 0x73], 4);
+    view.setUint32(8, pixelsPerMetre);
+    view.setUint32(12, pixelsPerMetre);
+    chunk[16] = 1;
+    view.setUint32(17, crc32(chunk.subarray(4, 17)));
+    const headerEnd = 33;
+    const out = new Uint8Array(png.length + chunk.length);
+    out.set(png.subarray(0, headerEnd), 0);
+    out.set(chunk, headerEnd);
+    out.set(png.subarray(headerEnd), headerEnd + chunk.length);
+    return out;
+  }
+
+  function renderPng(pub) {
+    return new Promise((resolve, reject) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(pub.widthPx);
+      canvas.height = Math.round(pub.heightPx);
+      canvas.style.width = `${Math.round(pub.widthPx)}px`;
+      canvas.style.height = `${Math.round(pub.heightPx)}px`;
+      const holder = document.createElement('div');
+      holder.style.cssText = 'position:fixed;left:-100000px;top:0;';
+      holder.appendChild(canvas);
+      document.body.appendChild(holder);
+      // devicePixelRatio = dpi / 96 makes Chart.js draw every line and letter at the print resolution.
+      const chart = new Chart(canvas, buildChartConfig(pub));
+      canvas.toBlob(async (blob) => {
+        try {
+          if (!blob) throw new Error('empty');
+          resolve(withPngResolution(new Uint8Array(await blob.arrayBuffer()), pub.dpi));
+        } catch (error) {
+          reject(error);
+        } finally {
+          chart.destroy();
+          holder.remove();
+        }
+      }, 'image/png');
+    });
+  }
+
+  async function downloadPng() {
+    if (!plottedItems().length) return;
+    const pub = publicationSettings();
+    try {
+      download(new Blob([await renderPng(pub)], { type: 'image/png' }), `${fileStem}_${pub.dpi}dpi.png`);
+    } catch (_) {
+      window.alert('The image is too large for this browser. Choose a lower resolution or a smaller figure.');
+    }
+  }
+
+  function buildSvg(pub) {
+    const W = pub.widthPx;
+    const H = pub.heightPx;
+    const fs = pub.fontPx;
+    const groups = axisGroups();
+    const leftGroups = groups.filter((g) => g.side === 'left');
+    const rightGroups = groups.filter((g) => g.side === 'right');
+    const esc = (text) => String(text).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    const n = (value) => Number(value.toFixed(2));
+    const textWidth = (text) => String(text).length * fs * 0.56;
+    const axisWidth = (group) => {
+      const decimals = decimalsFor(group.step);
+      const widest = Math.max(textWidth(group.min.toFixed(decimals)), textWidth(group.max.toFixed(decimals)));
+      return widest + fs * 2.9;
+    };
+    const stroke = 0.75;
+    const out = [];
+    const text = (x, y, value, anchor = 'middle', extra = '') =>
+      out.push(`<text x="${n(x)}" y="${n(y)}" text-anchor="${anchor}"${extra}>${esc(value)}</text>`);
+
+    const series = [];
+    groups.forEach((group) => group.items.forEach((item) => series.push({ group, item })));
+    series.forEach((entry, index) => {
+      entry.color = pub.mono ? '#000000' : entry.item.color;
+      entry.dash = pub.mono && entry.item.type !== 'bar' ? DASHES[index % DASHES.length] : [];
+    });
+
+    let top = fs * 0.6;
+    if (pub.title) top += fs * 1.5;
+    const padLeft = Math.max(fs, leftGroups.reduce((sum, g) => sum + axisWidth(g), 0));
+    const padRight = Math.max(fs * 1.5, rightGroups.reduce((sum, g) => sum + axisWidth(g), 0));
+    const legendRows = [[]];
+    if (pub.legend) {
+      let cursor = 0;
+      series.forEach((entry) => {
+        const width = fs * 2.6 + textWidth(fieldLabel(entry.item.field)) + fs;
+        if (cursor + width > W - padLeft - padRight && legendRows[legendRows.length - 1].length) {
+          legendRows.push([]);
+          cursor = 0;
+        }
+        legendRows[legendRows.length - 1].push({ entry, x: cursor, width });
+        cursor += width;
+      });
+    }
+    const legendHeight = pub.legend ? legendRows.length * fs * 1.5 : 0;
+    const x0 = padLeft;
+    const x1 = W - padRight;
+    const y0 = top + legendHeight + fs * 0.4;
+    const y1 = H - fs * 4.4;
+    const xs = (t) => x0 + ((t - winStart) / (winEnd - winStart)) * (x1 - x0);
+
+    out.push(`<rect width="${n(W)}" height="${n(H)}" fill="#ffffff"/>`);
+    if (pub.title) text(W / 2, fs * 1.3, pub.title, 'middle', ' font-weight="bold"');
+
+    if (pub.legend) {
+      legendRows.forEach((row, rowIndex) => {
+        const rowWidth = row.reduce((sum, cell) => sum + cell.width, 0);
+        const startX = x0 + Math.max(0, (x1 - x0 - rowWidth) / 2);
+        const y = top + rowIndex * fs * 1.5 + fs * 0.9;
+        row.forEach((cell) => {
+          const lx = startX + cell.x;
+          if (cell.entry.item.type === 'bar') {
+            out.push(`<rect x="${n(lx)}" y="${n(y - fs * 0.7)}" width="${n(fs * 2)}" height="${n(fs * 0.7)}" fill="${cell.entry.color}" fill-opacity="${pub.mono ? 0.35 : 0.6}"/>`);
+          } else {
+            const dash = cell.entry.dash.length ? ` stroke-dasharray="${cell.entry.dash.join(' ')}"` : '';
+            out.push(`<line x1="${n(lx)}" y1="${n(y - fs * 0.35)}" x2="${n(lx + fs * 2)}" y2="${n(y - fs * 0.35)}" stroke="${cell.entry.color}" stroke-width="1.2"${dash}/>`);
+          }
+          text(lx + fs * 2.4, y, fieldLabel(cell.entry.item.field), 'start');
+        });
+      });
+    }
+
+    const ticksX = timeTicks(winStart, winEnd, Math.floor((x1 - x0) / (fs * 7)));
+    const yTicks = (group) => {
+      const values = [];
+      const first = Math.ceil(group.min / group.step - 1e-9) * group.step;
+      for (let v = first; v <= group.max + group.step * 1e-6 && values.length < 60; v += group.step) values.push(v);
+      return values;
+    };
+    const ys = (group, v) => y1 - ((v - group.min) / (group.max - group.min)) * (y1 - y0);
+
+    if (pub.grid) {
+      out.push('<g stroke="#d9d9d9" stroke-width="0.5">');
+      ticksX.values.forEach((t) => out.push(`<line x1="${n(xs(t))}" y1="${n(y0)}" x2="${n(xs(t))}" y2="${n(y1)}"/>`));
+      if (groups.length) {
+        yTicks(groups[0]).forEach((v) => out.push(`<line x1="${n(x0)}" y1="${n(ys(groups[0], v))}" x2="${n(x1)}" y2="${n(ys(groups[0], v))}"/>`));
+      }
+      out.push('</g>');
+    }
+
+    out.push(`<clipPath id="plotArea"><rect x="${n(x0)}" y="${n(y0)}" width="${n(x1 - x0)}" height="${n(y1 - y0)}"/></clipPath>`);
+    out.push('<g clip-path="url(#plotArea)">');
+    const barWidth = Math.max(0.4, ((x1 - x0) / Math.max(times.length, 1)) * 0.8);
+    // Bars first, so lines stay readable on top of them.
+    const drawOrder = [...series].sort((a, b) => Number(b.item.type === 'bar') - Number(a.item.type === 'bar'));
+    drawOrder.forEach((entry) => {
+      const values = seriesValues[entry.item.field] || [];
+      if (entry.item.type === 'bar') {
+        const base = ys(entry.group, Math.min(Math.max(0, entry.group.min), entry.group.max));
+        const rects = [];
+        times.forEach((t, i) => {
+          const v = values[i];
+          if (v === null || v === undefined || !Number.isFinite(t)) return;
+          const y = ys(entry.group, v);
+          rects.push(`<rect x="${n(xs(t) - barWidth / 2)}" y="${n(Math.min(y, base))}" width="${n(barWidth)}" height="${n(Math.abs(base - y))}"/>`);
+        });
+        // Group opacity: overlapping bars of a dense series do not add up.
+        out.push(`<g fill="${entry.color}" opacity="${pub.mono ? 0.35 : 0.6}">${rects.join('')}</g>`);
+      } else {
+        const points = [];
+        times.forEach((t, i) => {
+          const v = values[i];
+          if (v === null || v === undefined || !Number.isFinite(t)) return;
+          points.push(`${points.length ? 'L' : 'M'}${n(xs(t))} ${n(ys(entry.group, v))}`);
+        });
+        const dash = entry.dash.length ? ` stroke-dasharray="${entry.dash.join(' ')}"` : '';
+        if (points.length) out.push(`<path d="${points.join('')}" fill="none" stroke="${entry.color}" stroke-width="1" stroke-linejoin="round"${dash}/>`);
+      }
+    });
+    out.push('</g>');
+
+    out.push(`<rect x="${n(x0)}" y="${n(y0)}" width="${n(x1 - x0)}" height="${n(y1 - y0)}" fill="none" stroke="#000000" stroke-width="${stroke}"/>`);
+
+    let previous = null;
+    ticksX.values.forEach((t) => {
+      const x = xs(t);
+      out.push(`<line x1="${n(x)}" y1="${n(y1)}" x2="${n(x)}" y2="${n(y1 + fs * 0.4)}" stroke="#000000" stroke-width="${stroke}"/>`);
+      timeLabel(t, ticksX.step, previous).forEach((line, lineIndex) => text(x, y1 + fs * (1.4 + lineIndex * 1.15), line));
+      previous = t;
+    });
+    text((x0 + x1) / 2, H - fs * 0.6, 'Time (UTC)');
+
+    const drawAxis = (group, x, direction) => {
+      const decimals = decimalsFor(group.step);
+      out.push(`<line x1="${n(x)}" y1="${n(y0)}" x2="${n(x)}" y2="${n(y1)}" stroke="#000000" stroke-width="${stroke}"/>`);
+      yTicks(group).forEach((v) => {
+        const y = ys(group, v);
+        out.push(`<line x1="${n(x)}" y1="${n(y)}" x2="${n(x + direction * fs * 0.4)}" y2="${n(y)}" stroke="#000000" stroke-width="${stroke}"/>`);
+        text(x + direction * fs * 0.6, y + fs * 0.35, v.toFixed(decimals), direction < 0 ? 'end' : 'start');
+      });
+      const titleX = x + direction * (axisWidth(group) - fs * 0.9);
+      const titleY = (y0 + y1) / 2;
+      text(titleX, titleY, group.label, 'middle', ` transform="rotate(${direction < 0 ? -90 : 90} ${n(titleX)} ${n(titleY)})"`);
+    };
+    let offset = 0;
+    leftGroups.forEach((group) => { drawAxis(group, x0 - offset, -1); offset += axisWidth(group); });
+    offset = 0;
+    rightGroups.forEach((group) => { drawAxis(group, x1 + offset, 1); offset += axisWidth(group); });
+
+    return [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${pub.widthMm}mm" height="${pub.heightMm}mm" viewBox="0 0 ${n(W)} ${n(H)}" font-family="${esc(pub.fontFamily)}" font-size="${n(fs)}" fill="#000000">`,
+      ...out,
+      '</svg>'
+    ].join('\n');
+  }
+
+  if (el('pubPngBtn')) el('pubPngBtn').addEventListener('click', downloadPng);
+  if (el('pubSvgBtn')) {
+    el('pubSvgBtn').addEventListener('click', () => {
+      if (!plottedItems().length) return;
+      download(new Blob([buildSvg(publicationSettings())], { type: 'image/svg+xml' }), `${fileStem}.svg`);
+    });
+  }
+  // Exposed for automated checks of the exports.
+  window.stationBrowser = { chartConfig, buildSvg, renderPng, publicationSettings, axisGroups };
+
+  applyColumns(false);
+  if (chartCanvas) refreshChartUi();
+})();
+</script>
+</body>
+</html>
+"""
+
+
+# ----------------------------
 # Progressive web app assets
 # ----------------------------
 COMPRESSIBLE_MIMETYPES = frozenset(
@@ -3659,944 +4652,200 @@ def create_web_app(cfg: dict, access_store: AccessStore):
             web_info_link=cfg.get("web_info_link"),
         )
 
-    @app.route("/station/<path:instrument_uuid>")
-    def browse_station(instrument_uuid: str):
+    def load_station_window(instrument_uuid: str):
+        """Access check and rows of the time range selected by the request arguments.
+
+        Used by the station page and by its CSV export, so both show the same rows.
+        """
         user = current_user()
         storage_root = storage_root_or_404()
-
-        instruments = set(available_instruments(storage_root))
-        if instrument_uuid not in instruments:
+        if instrument_uuid not in set(available_instruments(storage_root)):
             abort(404, "Station not found")
-
         if not station_is_accessible(user, instrument_uuid):
+            if user is None:
+                return redirect_to_login("Please log in to browse this station.")
             abort(403)
 
         preview = get_station_preview(storage_root, instrument_uuid)
-        station_name = preview.get("name") or instrument_uuid
+        latest_dt = parse_iso_ts(preview.get("last_timestamp") or "") or utc_now()
+        from_date = parse_date_ymd(request.args.get("from_date", ""))
+        to_date = parse_date_ymd(request.args.get("to_date", ""))
+        if from_date and to_date and to_date < from_date:
+            abort(400, "to_date must be >= from_date")
+
+        interval = request_preference_cookie(request, "interval", "station_trend_window", normalize_interval, "hour")
+        if from_date or to_date:
+            interval = "custom"
+        if interval not in STATION_BROWSER_INTERVALS:
+            interval = "hour"
+
+        try:
+            if interval == "custom":
+                win_end = _as_utc_bound(to_date, end_of_day=True) if to_date else latest_dt
+                win_start = _as_utc_bound(from_date, end_of_day=False) if from_date else win_end - timedelta(days=1)
+                if win_end < win_start:
+                    win_end = win_start + timedelta(days=1)
+                if win_end - win_start > timedelta(days=STATION_BROWSER_MAX_CUSTOM_DAYS + 1):
+                    abort(
+                        400,
+                        f"A custom range can cover at most {STATION_BROWSER_MAX_CUSTOM_DAYS} days; "
+                        "use the ZIP download for longer periods",
+                    )
+                span = win_end - win_start
+                prev_anchor, next_anchor = None, None
+                prev_range = (win_start - span, win_start)
+                next_range = (win_end, win_end + span)
+            else:
+                win_end = parse_iso_ts(request.args.get("anchor", "")) or latest_dt
+                win_start = interval_start(win_end, interval)
+                prev_anchor = shift_anchor(win_end, interval, -1)
+                next_anchor = shift_anchor(win_end, interval, 1)
+                prev_range = next_range = None
+        except OverflowError:
+            abort(400, "The requested time range is out of bounds")
+
+        loaded = []
+        for row in load_station_rows(storage_root, instrument_uuid, from_date=win_start, to_date=win_end, limit=None):
+            ts = parse_iso_ts(row.get("timestamp", ""))
+            if ts is not None:
+                loaded.append((ts, row))
+        if interval != "custom" and not request.args.get("anchor") and loaded:
+            # The latest window ends at the newest row, which need not be the last line of the file.
+            newest = max(ts for ts, _ in loaded)
+            if newest > win_end:
+                win_end = latest_dt = newest
+                win_start = interval_start(win_end, interval)
+                prev_anchor = shift_anchor(win_end, interval, -1)
+                next_anchor = shift_anchor(win_end, interval, 1)
+        rows_ts = sorted(((ts, row) for ts, row in loaded if win_start <= ts <= win_end), key=lambda item: item[0])
+
+        return {
+            "user": user,
+            "storage_root": storage_root,
+            "preview": preview,
+            "latest_dt": latest_dt,
+            "interval": interval,
+            "win_start": win_start,
+            "win_end": win_end,
+            "prev_anchor": prev_anchor,
+            "next_anchor": next_anchor,
+            "prev_range": prev_range,
+            "next_range": next_range,
+            "from_date": from_date,
+            "to_date": to_date,
+            "rows": [row for _, row in rows_ts],
+        }
+
+    @app.route("/station/<path:instrument_uuid>/export.csv")
+    def export_station_csv(instrument_uuid: str):
+        window = load_station_window(instrument_uuid)
+        if not isinstance(window, dict):
+            return window
+        rows = window["rows"]
+        all_columns = list(dict.fromkeys(key for row in rows for key in row))
+        wanted = [c for c in request.args.getlist("col") if c in all_columns]
+        columns = wanted or all_columns
+        if not rows:
+            abort(404, "No data rows in the selected time range")
+
+        def generate():
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow(columns)
+            for index, row in enumerate(rows, start=1):
+                writer.writerow(["" if row.get(c) is None else row.get(c) for c in columns])
+                if index % 500 == 0:
+                    yield buffer.getvalue()
+                    buffer.seek(0)
+                    buffer.truncate(0)
+            yield buffer.getvalue()
+
+        stamp = "%Y%m%dT%H%M%SZ"
+        filename = safe_filename(
+            f"{instrument_uuid}_{window['win_start'].strftime(stamp)}_{window['win_end'].strftime(stamp)}.csv"
+        )
+        response = app.response_class(generate(), mimetype="text/csv")
+        response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    @app.route("/station/<path:instrument_uuid>")
+    def browse_station(instrument_uuid: str):
+        window = load_station_window(instrument_uuid)
+        if not isinstance(window, dict):
+            return window
+        user = window["user"]
+        rows = window["rows"]
+        interval = window["interval"]
+        station_name = window["preview"].get("name") or instrument_uuid
         can_control = station_is_controllable(user, instrument_uuid)
         station_logo_row = access_store.get_station_logo(instrument_uuid)
         station_logo_url = None
         if station_logo_row:
             station_logo_url = url_for("asset_file", kind="station", name=Path(station_logo_row["logo_path"]).name)
 
-        interval = request_preference_cookie(request, "interval", "station_trend_window", normalize_interval, "hour")
-
-        from_date = parse_date_ymd(request.args.get("from_date", ""))
-        to_date = parse_date_ymd(request.args.get("to_date", ""))
-        if from_date and to_date and to_date < from_date:
-            abort(400, "to_date must be >= from_date")
-
-        anchor_param = request.args.get("anchor", "")
-        rows = None
-        if interval != "custom" and from_date is None and to_date is None:
-            # Read only the files covering the requested window, not the whole history.
-            hint_end = parse_iso_ts(anchor_param) or parse_iso_ts(preview.get("last_timestamp") or "")
-            if hint_end is not None:
-                try:
-                    hint_start = interval_start(hint_end, interval)
-                except OverflowError:
-                    abort(400, "anchor is out of range")
-                windowed = load_station_rows(
-                    storage_root, instrument_uuid, from_date=hint_start, to_date=hint_end, limit=None
-                )
-                for row in windowed:
-                    ts = parse_iso_ts(row.get("timestamp", ""))
-                    if ts is not None and hint_start <= ts <= hint_end:
-                        rows = windowed
-                        break
-        if rows is None:
-            rows = load_station_rows(storage_root, instrument_uuid, from_date=from_date, to_date=to_date, limit=None)
-        if not rows:
-            return render_template_string(
-                """
-                <!doctype html>
-                <html lang="en">
-                <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"/></head>
-                <body>
-                  <p><a href="{{ url_for('index') }}">Home</a></p>
-                  <h1>Station {{ station_name }} ({{ instrument_uuid }})</h1>
-                  <p>No data rows found for the selected filters.</p>
-                </body></html>
-                """,
-                instrument_uuid=instrument_uuid,
-                station_name=station_name,
-            )
-
-        rows_ts = []
-        for row in rows:
-            ts = parse_iso_ts(row.get("timestamp", ""))
-            if ts is not None:
-                rows_ts.append((ts, row))
-
-        if rows_ts:
-            rows_ts.sort(key=lambda x: x[0])
-            max_ts = rows_ts[-1][0]
-        else:
-            max_ts = datetime.now(timezone.utc)
-
-        anchor = parse_iso_ts(anchor_param) or max_ts
-
-        if interval == "custom":
-            if from_date:
-                win_start = datetime.combine(from_date, datetime.min.time(), tzinfo=timezone.utc)
-            else:
-                win_start = max_ts - timedelta(days=1)
-            if to_date:
-                win_end = datetime.combine(to_date, datetime.max.time(), tzinfo=timezone.utc)
-            else:
-                win_end = max_ts
-        else:
-            win_end = anchor
-            try:
-                win_start = interval_start(anchor, interval)
-            except OverflowError:
-                abort(400, "anchor is out of range")
-
-        filtered_rows = []
-        for ts, row in rows_ts:
-            if win_start <= ts <= win_end:
-                filtered_rows.append(row)
-
-        if not filtered_rows and rows_ts:
-            fallback_end = rows_ts[-1][0]
-            fallback_start = interval_start(fallback_end, interval if interval != "custom" else "hour")
-            filtered_rows = [row for ts, row in rows_ts if fallback_start <= ts <= fallback_end]
-            win_start, win_end = fallback_start, fallback_end
-
-        rows = filtered_rows
-
         excluded = {"timestamp", "topic", "uuid", "position", "latitude", "longitude", "lat", "lon", "lng"}
         numeric_cols = extract_numeric_series(rows, excluded=excluded)
-
         units_map = get_field_units(cfg)
-        browser_prefs_cookie_name = f"station_browser_prefs_{safe_filename(instrument_uuid)}"
-        chart_cookie_name = f"station_chart_config_{safe_filename(instrument_uuid)}"
-        chart_config_args = request.args
-        browser_prefs = {}
-        browser_prefs_raw = str(request.args.get("browser_prefs", "") or "").strip()
-        if browser_prefs_raw:
-            try:
-                parsed_browser_prefs = json.loads(browser_prefs_raw)
-                if isinstance(parsed_browser_prefs, dict):
-                    browser_prefs = parsed_browser_prefs
-            except Exception:
-                browser_prefs = {}
-        if not str(request.args.get("chart_config", "") or "").strip():
-            if isinstance(browser_prefs.get("chart_config"), dict):
-                chart_config_args = {"chart_config": json.dumps(browser_prefs.get("chart_config"))}
-        chart_config = parse_station_browser_chart_config(chart_config_args, numeric_cols)
-        chart_config_json = serialize_station_browser_chart_config(chart_config)
-        resolved_chart_specs = resolve_station_chart_specs(access_store, instrument_uuid)
+
         # Long windows hold tens of thousands of samples: the chart gets an evenly
-        # thinned series, while the table and the statistics keep every row.
+        # thinned series, while the table, the statistics and the CSV keep every row.
         chart_step = max(1, math.ceil(len(rows) / STATION_BROWSER_MAX_CHART_POINTS))
         chart_rows = rows[::chart_step]
         if chart_step > 1 and chart_rows[-1] is not rows[-1]:
             chart_rows.append(rows[-1])
-        chart_labels, chart_datasets, chart_y_axes = build_station_browser_chart_model(chart_rows, chart_config, units_map, resolved_chart_specs)
-        selected_fields = [item["field"] for side in ("left", "right") for item in chart_config.get(side, [])]
-        numeric_series_values = {}
-        numeric_series_aligned = {}
-        for field in numeric_cols:
-            aligned_values = [_to_float(row.get(field)) for row in chart_rows]
-            numeric_series_aligned[field] = aligned_values
-            numeric_series_values[field] = [value for value in aligned_values if value is not None]
-        chart_axis_defaults = build_station_browser_axis_defaults(numeric_series_values, resolved_chart_specs)
+        chart_labels = [str(row.get("timestamp") or "") for row in chart_rows]
+        numeric_series_aligned = {field: [_to_float(row.get(field)) for row in chart_rows] for field in numeric_cols}
 
         # Hourly files can have different headers, so use every column seen in the window.
         all_table_columns = list(dict.fromkeys(key for row in rows for key in row))
-        table_prefs = parse_station_browser_table_prefs(request.args, request.cookies, instrument_uuid, all_table_columns)
-        browser_prefs_json = serialize_station_browser_prefs(chart_config, table_prefs)
-
+        page_size = int(
+            request_preference_cookie(
+                request, "page_size", "station_page_size",
+                lambda v: v if v in STATION_BROWSER_PAGE_SIZES else "50", "50",
+            )
+        )
+        order = request_preference_cookie(
+            request, "order", "station_row_order", lambda v: "desc" if v == "desc" else "asc", "asc"
+        )
         try:
             page = max(1, int(request.args.get("page", "1") or "1"))
         except ValueError:
             page = 1
-        page_size_pref = table_prefs["page_size"]
-        page_size = max(1, len(rows)) if page_size_pref == "window" else int(page_size_pref)
         total_rows = len(rows)
         page_count = max(1, (total_rows + page_size - 1) // page_size)
-        if page > page_count:
-            page = page_count
+        page = min(page, page_count)
         start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-        table_rows = rows[start_idx:end_idx]
-        table_cols = [c for c in table_prefs["visible_columns"] if c in all_table_columns]
-        if not table_cols:
-            table_cols = all_table_columns
-        table_headers = {
-            c: f"{c} [{units_map.get(c, '-')}]"
-            if c not in ("timestamp", "topic", "uuid", "name", "position", "latitude", "longitude", "lat", "lon", "lng")
-            else c
-            for c in all_table_columns
-        }
-        visible_numeric_columns = [c for c in table_cols if c in numeric_cols]
-        table_column_stats = build_table_column_stats(rows, visible_numeric_columns)
-        visible_column_set = set(table_cols)
+        ordered_rows = rows[::-1] if order == "desc" else rows
+        table_rows = ordered_rows[start_idx:start_idx + page_size]
+        table_column_stats = build_table_column_stats(rows, numeric_cols)
 
-        try:
-            prev_anchor = shift_anchor(anchor, interval, -1).isoformat().replace("+00:00", "Z")
-            next_anchor = shift_anchor(anchor, interval, 1).isoformat().replace("+00:00", "Z")
-        except OverflowError:
-            abort(400, "anchor is out of range")
-        interval_label = dict(TREND_INTERVALS).get(interval, interval)
+        def iso(dt):
+            return dt.isoformat().replace("+00:00", "Z")
+
+        # Arguments that identify the current time range, reused by every link of the page.
+        if interval == "custom":
+            range_args = {
+                "from_date": window["win_start"].date().isoformat(),
+                "to_date": window["win_end"].date().isoformat(),
+            }
+            prev_args = {
+                "from_date": window["prev_range"][0].date().isoformat(),
+                "to_date": (window["prev_range"][1] - timedelta(seconds=1)).date().isoformat(),
+            }
+            next_args = {
+                "from_date": (window["next_range"][0] + timedelta(seconds=1)).date().isoformat(),
+                "to_date": window["next_range"][1].date().isoformat(),
+            }
+        else:
+            range_args = {"interval": interval}
+            if request.args.get("anchor"):
+                range_args["anchor"] = iso(window["win_end"])
+            prev_args = {"interval": interval, "anchor": iso(window["prev_anchor"])}
+            next_args = {"interval": interval, "anchor": iso(window["next_anchor"])}
+        is_latest = window["win_end"] >= window["latest_dt"]
 
         return render_template_string(
-            """
-            <!doctype html>
-            <html lang="en">
-            <head>
-              <meta charset="utf-8">
-              <title>Station {{ station_name }} ({{ instrument_uuid }})</title>
-              <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-              <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-              <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-              <style>
-                table { border-collapse: collapse; width: 100%; font-size: 12px; }
-                th, td { border: 1px solid #ddd; padding: 4px; }
-                th { position: sticky; top: 0; background: #f8f8f8; }
-                .table-wrap { max-height: 420px; overflow: auto; border: 1px solid #ddd; }
-                .panel { border: 1px solid #ddd; padding: 12px; margin-bottom: 12px; border-radius: 8px; }
-                .chart-config-card { background: #fafafa; }
-                .table-col-header { display: flex; align-items: center; gap: 6px; min-width: 0; }
-                .table-col-title { display: inline-block; white-space: nowrap; }
-                .collapsed-column { width: 32px; min-width: 32px; max-width: 32px; padding-left: 4px; padding-right: 4px; }
-                .collapsed-column .table-col-header { justify-content: center; }
-                .collapsed-column .table-col-title { display: none; }
-                .collapsed-cell { width: 32px; min-width: 32px; max-width: 32px; padding: 0; }
-                .stats-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-                .stats-card { border: 1px solid #ddd; border-radius: 8px; padding: 10px; background: #fafafa; }
-              </style>
-            </head>
-            <body class="container-fluid py-3">
-              {% if app_logo_url %}<img src="{{ app_logo_url }}" alt="App logo" style="max-height:48px; margin-bottom:8px;">{% endif %}
-              <p><a href="{{ url_for('index') }}">Home</a></p>
-              <h1>Station {{ station_name }} ({{ instrument_uuid }})</h1>
-              {% if station_logo_url %}
-                <p><img src="{{ station_logo_url }}" alt="Station logo" style="max-height:48px;"></p>
-              {% endif %}
-
-              <div class="panel" id="intervalPanel">
-                <h2>Time interval</h2>
-                <form method="get" id="intervalForm">
-                  <label>Window
-                    <select name="interval" id="intervalSelect">
-                      {% for code, label in interval_options %}
-                        <option value="{{ code }}" {% if code==interval %}selected{% endif %}>{{ label }}</option>
-                      {% endfor %}
-                    </select>
-                  </label>
-                  <input type="hidden" name="anchor" value="{{ request.args.get('anchor','') }}"/>
-                  <input type="hidden" name="chart_config" value="{{ chart_config_json }}"/>
-                  <input type="hidden" name="browser_prefs" value="{{ browser_prefs_json }}"/>
-                </form>
-                <p id="intervalPager">
-                  <a href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, interval=interval, anchor=prev_anchor, browser_prefs=browser_prefs_json, from_date=request.args.get('from_date',''), to_date=request.args.get('to_date','')) }}">&#8592; previous {{ interval_label }}</a>
-                  |
-                  <a href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, interval=interval, anchor=next_anchor, browser_prefs=browser_prefs_json, from_date=request.args.get('from_date',''), to_date=request.args.get('to_date','')) }}">next {{ interval_label }} &#8594;</a>
-                </p>
-                <p id="intervalSummary">Showing data in window: {{ win_start }} to {{ win_end }} UTC</p>
-                {% if chart_step > 1 %}<p class="small text-muted">The chart shows one sample every {{ chart_step }}; the table and the statistics use all {{ total_rows }} rows.</p>{% endif %}
-              </div>
-
-              <div class="panel">
-                <h2>Download station data</h2>
-                <form method="post" action="{{ url_for('download') }}">
-                  <input type="hidden" name="instrument" value="{{ instrument_uuid }}"/>
-                  <label>From <input type="date" name="from_date" value="{{ request.args.get('from_date','') }}"></label>
-                  <label>To <input type="date" name="to_date" value="{{ request.args.get('to_date','') }}"></label>
-                  <button class="btn btn-primary btn-sm" type="submit">Download ZIP</button>
-                </form>
-                {% if can_control %}
-                <hr/>
-                <p class="mb-2"><a class="btn btn-outline-primary btn-sm" href="{{ url_for('station_chart_settings', instrument_uuid=instrument_uuid) }}">Trend chart axis settings</a></p>
-                {% endif %}
-                {% if user %}
-                <hr/>
-                <h3 class="h6">Station logo</h3>
-                <form method="post" action="{{ url_for('upload_station_logo', instrument_uuid=instrument_uuid) }}" enctype="multipart/form-data">
-                  <input class="form-control form-control-sm w-auto d-inline-block" type="file" name="logo" accept="image/*" required>
-                  <button class="btn btn-secondary btn-sm" type="submit">Upload logo</button>
-                </form>
-                {% endif %}
-              </div>
-
-              <div class="panel">
-                <h2>Chart</h2>
-                {% if not numeric_cols %}
-                  <p>No numeric columns available for charting.</p>
-                {% else %}
-                  <form method="get" id="chartForm">
-                    <input type="hidden" name="interval" value="{{ interval }}"/>
-                    <input type="hidden" name="anchor" value="{{ request.args.get('anchor','') }}"/>
-                    <input type="hidden" name="from_date" value="{{ request.args.get('from_date','') }}"/>
-                    <input type="hidden" name="to_date" value="{{ request.args.get('to_date','') }}"/>
-                    <input type="hidden" name="browser_prefs" id="browserPrefsInput" value="{{ browser_prefs_json }}"/>
-                    <input type="hidden" name="chart_config" id="chartConfigInput" value="{{ chart_config_json }}"/>
-                    <div class="d-flex flex-wrap gap-2 mb-3">
-                      <button class="btn btn-outline-secondary btn-sm" type="button" id="chartExportBtn">Export browser prefs</button>
-                      <label class="btn btn-outline-secondary btn-sm mb-0" for="chartImportFile">Import browser prefs</label>
-                      <input id="chartImportFile" type="file" accept="application/json,.json" hidden>
-                    </div>
-                    <div class="row g-3 align-items-start">
-                      <div class="col-12 col-xl-4">
-                        <div class="border rounded p-2 h-100">
-                          <div class="fw-semibold mb-2">Left Axis</div>
-                          <select id="leftSelected" class="form-select" size="9" multiple></select>
-                          <div id="leftConfig" class="mt-2"></div>
-                        </div>
-                      </div>
-                      <div class="col-12 col-xl-1 d-flex flex-xl-column justify-content-center align-items-stretch gap-2">
-                        <button class="btn btn-outline-primary btn-sm" type="button" id="addLeftBtn" title="Add to left axis">&larr;&larr;</button>
-                        <button class="btn btn-outline-secondary btn-sm" type="button" id="removeLeftBtn" title="Remove from left axis">&rarr;&rarr;</button>
-                      </div>
-                      <div class="col-12 col-xl-2">
-                        <div class="border rounded p-2 h-100">
-                          <div class="fw-semibold mb-2">Available Parameters</div>
-                          <select id="availableFields" class="form-select" size="12" multiple>
-                            {% for c in numeric_cols %}
-                              <option value="{{ c }}">{{ c }} [{{ units_map.get(c,'-') }}]</option>
-                            {% endfor %}
-                          </select>
-                        </div>
-                      </div>
-                      <div class="col-12 col-xl-1 d-flex flex-xl-column justify-content-center align-items-stretch gap-2">
-                        <button class="btn btn-outline-primary btn-sm" type="button" id="addRightBtn" title="Add to right axis">&rarr;&rarr;</button>
-                        <button class="btn btn-outline-secondary btn-sm" type="button" id="removeRightBtn" title="Remove from right axis">&larr;&larr;</button>
-                      </div>
-                      <div class="col-12 col-xl-4">
-                        <div class="border rounded p-2 h-100">
-                          <div class="fw-semibold mb-2 text-xl-end">Right Axis</div>
-                          <select id="rightSelected" class="form-select" size="9" multiple></select>
-                          <div id="rightConfig" class="mt-2"></div>
-                        </div>
-                      </div>
-                    </div>
-                    <noscript><div class="mt-3"><button class="btn btn-primary btn-sm" type="submit">Update chart</button></div></noscript>
-                  </form>
-                  <canvas id="chart" height="110"></canvas>
-                {% endif %}
-              </div>
-
-              <script id="stationBrowseState" type="application/json">{{ station_browse_state_json|safe }}</script>
-
-              <div class="panel">
-                <h2>Data table</h2>
-                <form method="get" id="tablePrefsForm" class="mb-3">
-                  <input type="hidden" name="interval" value="{{ interval }}"/>
-                  <input type="hidden" name="anchor" value="{{ request.args.get('anchor','') }}"/>
-                  <input type="hidden" name="from_date" value="{{ request.args.get('from_date','') }}"/>
-                  <input type="hidden" name="to_date" value="{{ request.args.get('to_date','') }}"/>
-                  <input type="hidden" name="browser_prefs" id="tableBrowserPrefsInput" value="{{ browser_prefs_json }}"/>
-                  <div class="row g-3 align-items-start">
-                    <div class="col-12 col-md-3">
-                      <label class="form-label form-label-sm">Rows per page</label>
-                      <select class="form-select form-select-sm" id="tablePageSize">
-                        <option value="50" {% if page_size_pref == '50' %}selected{% endif %}>50</option>
-                        <option value="100" {% if page_size_pref == '100' %}selected{% endif %}>100</option>
-                        <option value="250" {% if page_size_pref == '250' %}selected{% endif %}>250</option>
-                        <option value="window" {% if page_size_pref == 'window' %}selected{% endif %}>Trend window</option>
-                      </select>
-                    </div>
-                  </div>
-                </form>
-                <div id="dataTableSection">
-                <p>Rows {{ start_idx + 1 if total_rows else 0 }}-{{ end_idx if end_idx < total_rows else total_rows }} of {{ total_rows }}</p>
-                <p id="tablePager">
-                  {% if page > 1 %}
-                    <a class="table-page-link" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, interval=interval, anchor=request.args.get('anchor',''), from_date=request.args.get('from_date',''), to_date=request.args.get('to_date',''), page=page-1, browser_prefs=browser_prefs_json) }}">&#8592; prev page</a>
-                  {% endif %}
-                  {% if page < page_count %}
-                    {% if page > 1 %}|{% endif %}
-                    <a class="table-page-link" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, interval=interval, anchor=request.args.get('anchor',''), from_date=request.args.get('from_date',''), to_date=request.args.get('to_date',''), page=page+1, browser_prefs=browser_prefs_json) }}">next page &#8594;</a>
-                  {% endif %}
-                </p>
-                <div class="table-wrap" id="tableWrap">
-                  <table class="table table-sm table-striped table-bordered">
-                    <thead>
-                      <tr>
-                        {% for c in all_table_columns %}
-                          <th class="{% if c not in visible_column_set %}collapsed-column{% endif %}" title="{{ table_headers[c] }}">
-                            <label class="table-col-header mb-0">
-                              <input class="form-check-input table-col-toggle" type="checkbox" value="{{ c }}" {% if c in visible_column_set %}checked{% endif %}>
-                              <span class="table-col-title">{{ table_headers[c] }}</span>
-                            </label>
-                          </th>
-                        {% endfor %}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {% for r in table_rows %}
-                        <tr>
-                          {% for c in all_table_columns %}
-                            <td class="{% if c not in visible_column_set %}collapsed-cell{% endif %}">{% if c in visible_column_set %}{{ r.get(c, '') }}{% endif %}</td>
-                          {% endfor %}
-                        </tr>
-                      {% endfor %}
-                      {% if not table_rows %}
-                        <tr>
-                          <td colspan="{{ all_table_columns|length if all_table_columns else 1 }}" class="text-center text-muted">No rows in the selected trend window.</td>
-                        </tr>
-                      {% endif %}
-                    </tbody>
-                  </table>
-                </div>
-                </div>
-                <div class="mb-3 mt-3" id="statisticsSection">
-                  <h3 class="h5">Statistics</h3>
-                  {% if table_column_stats %}
-                    <div class="stats-grid">
-                      {% for stat in table_column_stats %}
-                        <div class="stats-card">
-                          <div class="fw-semibold">{{ stat.column }}{% if units_map.get(stat.column) %} [{{ units_map.get(stat.column) }}]{% endif %}</div>
-                          <div class="small text-muted">Minimum</div>
-                          <div>{{ stat.min }}</div>
-                          <div class="small text-muted mb-2">{{ stat.min_at or '-' }}</div>
-                          <div class="small text-muted">Maximum</div>
-                          <div>{{ stat.max }}</div>
-                          <div class="small text-muted mb-2">{{ stat.max_at or '-' }}</div>
-                          <div class="small text-muted">Average</div>
-                          <div class="mb-2">{{ stat.avg }}</div>
-                          <div class="small text-muted">Standard deviation</div>
-                          <div>{{ stat.stddev }}</div>
-                        </div>
-                      {% endfor %}
-                    </div>
-                  {% else %}
-                    <p class="text-muted mb-0">No numeric parameters available in the selected trend window.</p>
-                  {% endif %}
-                </div>
-              </div>
-
-              <script>
-                // The series are embedded once, in the stationBrowseState JSON block above.
-                let labels = [];
-                let datasets = [];
-                let yAxes = {};
-                const chartConfigState = {{ chart_config | tojson }};
-                const tablePrefsState = {{ table_prefs | tojson }};
-                let unitsMap = {};
-                let allNumericCols = [];
-                let allTableColumns = [];
-                const chartConfigCookieName = {{ chart_cookie_name | tojson }};
-                const browserPrefsCookieName = {{ browser_prefs_cookie_name | tojson }};
-                const defaultChartColors = {{ default_chart_colors | tojson }};
-                let numericSeriesAligned = {};
-                let chartAxisDefaults = {};
-                const browserPrefsStorageKey = `station_browser_prefs:${{ instrument_uuid | tojson }}`;
-                const chartConfigStorageKey = `station_chart_config:${{ instrument_uuid | tojson }}`;
-                const hasBrowserPrefsQuery = {{ (True if request.args.get('browser_prefs') or request.args.get('chart_config') else False) | tojson }};
-                const chartCanvas = document.getElementById('chart');
-                let stationChart = null;
-                const chartFillPalette = ['rgba(11,87,208,0.25)','rgba(31,157,85,0.25)','rgba(217,95,2,0.25)','rgba(123,31,162,0.25)','rgba(194,24,91,0.25)'];
-
-                function expireLegacyCookie(name) {
-                  document.cookie = `${name}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; samesite=lax`;
-                }
-
-                function loadStoredBrowserPrefs() {
-                  try {
-                    const raw = window.localStorage.getItem(browserPrefsStorageKey);
-                    if (!raw) return null;
-                    const parsed = JSON.parse(raw);
-                    return parsed && typeof parsed === 'object' ? parsed : null;
-                  } catch (_) {
-                    return null;
-                  }
-                }
-
-                function persistStationPrefs(payload) {
-                  try {
-                    window.localStorage.setItem(browserPrefsStorageKey, JSON.stringify(payload));
-                    window.localStorage.setItem(chartConfigStorageKey, JSON.stringify(chartConfigState));
-                  } catch (_) {
-                    // keep the page functional even if localStorage is unavailable
-                  }
-                }
-
-                expireLegacyCookie(browserPrefsCookieName);
-                expireLegacyCookie(chartConfigCookieName);
-
-                const storedBrowserPrefs = loadStoredBrowserPrefs();
-                if (!hasBrowserPrefsQuery && storedBrowserPrefs && typeof storedBrowserPrefs === 'object') {
-                  const url = new URL(window.location.href);
-                  url.searchParams.set('browser_prefs', JSON.stringify(storedBrowserPrefs));
-                  if (storedBrowserPrefs.chart_config && typeof storedBrowserPrefs.chart_config === 'object') {
-                    url.searchParams.set('chart_config', JSON.stringify(storedBrowserPrefs.chart_config));
-                  }
-                  window.location.replace(url.toString());
-                }
-
-                function parseStationBrowseStateFromDocument(doc) {
-                  const node = doc.getElementById('stationBrowseState');
-                  if (!node) return null;
-                  try {
-                    return JSON.parse(node.textContent || '{}');
-                  } catch (_) {
-                    return null;
-                  }
-                }
-
-                function applyServerState(state) {
-                  if (!state || typeof state !== 'object') return;
-                  labels = Array.isArray(state.chart_labels) ? state.chart_labels : [];
-                  datasets = Array.isArray(state.chart_datasets) ? state.chart_datasets : [];
-                  yAxes = state.chart_y_axes && typeof state.chart_y_axes === 'object' ? state.chart_y_axes : {};
-                  unitsMap = state.units_map && typeof state.units_map === 'object' ? state.units_map : {};
-                  allNumericCols = Array.isArray(state.numeric_cols) ? state.numeric_cols : [];
-                  allTableColumns = Array.isArray(state.all_table_columns) ? state.all_table_columns : [];
-                  numericSeriesAligned = state.numeric_series_aligned && typeof state.numeric_series_aligned === 'object' ? state.numeric_series_aligned : {};
-                  chartAxisDefaults = state.chart_axis_defaults && typeof state.chart_axis_defaults === 'object' ? state.chart_axis_defaults : {};
-                }
-                applyServerState(parseStationBrowseStateFromDocument(document));
-
-                function buildStationChartModel() {
-                  const builtDatasets = [];
-                  const builtAxes = {
-                    x: { display: true, title: { display: true, text: 'timestamp' } }
-                  };
-                  ['left', 'right'].forEach((side) => {
-                    (chartConfigState[side] || []).forEach((item, idx) => {
-                      const field = item.field;
-                      const axisId = `${side}_${idx}`;
-                      const unit = unitsMap[field] || '';
-                      const label = `${field} [${unit || '-'}]`;
-                      const color = item.color || defaultChartColors[builtDatasets.length % defaultChartColors.length];
-                      builtDatasets.push({
-                        type: item.type === 'bar' ? 'bar' : 'line',
-                        label,
-                        data: (numericSeriesAligned[field] || []).map((value) => value == null ? null : Number(value)),
-                        borderColor: color,
-                        backgroundColor: item.type === 'bar' ? `${color}40` : chartFillPalette[builtDatasets.length % chartFillPalette.length],
-                        pointRadius: 0,
-                        tension: item.type === 'bar' ? 0 : 0.2,
-                        yAxisID: axisId
-                      });
-                      const axisCfg = {
-                        type: 'linear',
-                        display: true,
-                        position: side,
-                        title: { display: true, text: label },
-                        grid: { drawOnChartArea: side === 'left' && idx === 0 },
-                        offset: idx > 0
-                      };
-                      if (item.min !== null && item.min !== undefined && Number.isFinite(Number(item.min))) axisCfg.min = Number(item.min);
-                      if (item.max !== null && item.max !== undefined && Number.isFinite(Number(item.max))) axisCfg.max = Number(item.max);
-                      if (item.step !== null && item.step !== undefined && Number(item.step) > 0) axisCfg.ticks = { stepSize: Number(item.step) };
-                      builtAxes[axisId] = axisCfg;
-                    });
-                  });
-                  return { datasets: builtDatasets, axes: builtAxes };
-                }
-
-                function syncChartUrl() {
-                  const url = new URL(window.location.href);
-                  const payload = { chart_config: chartConfigState, table: tablePrefsState };
-                  url.searchParams.set('chart_config', JSON.stringify(chartConfigState));
-                  url.searchParams.set('browser_prefs', JSON.stringify(payload));
-                  url.searchParams.delete('page');
-                  window.history.replaceState({}, '', url.toString());
-                }
-
-                function renderStationChart() {
-                  if (!chartCanvas) return;
-                  const model = buildStationChartModel();
-                  if (!stationChart) {
-                    if (!model.datasets.length) return;
-                    stationChart = new Chart(chartCanvas, {
-                      type: 'bar',
-                      data: { labels, datasets: model.datasets },
-                      options: { responsive: true, scales: model.axes }
-                    });
-                    return;
-                  }
-                  stationChart.data.labels = labels;
-                  stationChart.data.datasets = model.datasets;
-                  stationChart.options.scales = model.axes;
-                  stationChart.update('none');
-                }
-
-                const chartForm = document.getElementById('chartForm');
-                if (chartForm) {
-                  const availableSel = document.getElementById('availableFields');
-                  const leftSel = document.getElementById('leftSelected');
-                  const rightSel = document.getElementById('rightSelected');
-                  const leftConfigEl = document.getElementById('leftConfig');
-                  const rightConfigEl = document.getElementById('rightConfig');
-                  const chartConfigInput = document.getElementById('chartConfigInput');
-                  const browserPrefsInput = document.getElementById('browserPrefsInput');
-                  const chartImportFile = document.getElementById('chartImportFile');
-                  const chartExportBtn = document.getElementById('chartExportBtn');
-
-                  const selectedFieldSet = () => new Set([
-                    ...chartConfigState.left.map((item) => item.field),
-                    ...chartConfigState.right.map((item) => item.field)
-                  ]);
-
-                  function fieldLabel(field) {
-                    return `${field} [${unitsMap[field] || '-'}]`;
-                  }
-
-                  function escapeHtml(value) {
-                    return String(value).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
-                  }
-
-                  function renderSelectOptions(selectEl, fields) {
-                    if (!selectEl) return;
-                    const prev = new Set(Array.from(selectEl.selectedOptions).map((o) => o.value));
-                    selectEl.innerHTML = '';
-                    fields.forEach((field) => {
-                      const opt = document.createElement('option');
-                      opt.value = field;
-                      opt.textContent = fieldLabel(field);
-                      if (prev.has(field)) opt.selected = true;
-                      selectEl.appendChild(opt);
-                    });
-                  }
-
-                  function renderAxisConfig(side, targetEl) {
-                    if (!targetEl) return;
-                    const items = chartConfigState[side] || [];
-                    if (!items.length) {
-                      targetEl.innerHTML = '<div class="text-muted small">No parameters selected for this axis.</div>';
-                      return;
-                    }
-                    targetEl.innerHTML = items.map((item, idx) => `
-                      <div class="border rounded p-2 mb-2 chart-config-card">
-                        <div class="fw-semibold small mb-2">${escapeHtml(fieldLabel(item.field))}</div>
-                        <div class="row g-2">
-                          <div class="col-12 col-md-3">
-                            <label class="form-label form-label-sm mb-1">Chart</label>
-                            <select class="form-select form-select-sm chart-type" data-side="${side}" data-index="${idx}">
-                              <option value="line" ${item.type === 'line' ? 'selected' : ''}>line</option>
-                              <option value="bar" ${item.type === 'bar' ? 'selected' : ''}>bar</option>
-                            </select>
-                          </div>
-                          <div class="col-12 col-md-3">
-                            <label class="form-label form-label-sm mb-1">Color</label>
-                            <input class="form-control form-control-sm chart-color" data-side="${side}" data-index="${idx}" type="color" value="${item.color || defaultChartColors[0]}">
-                          </div>
-                          <div class="col-12 col-md-3">
-                            <label class="form-label form-label-sm mb-1">Y min</label>
-                            <input class="form-control form-control-sm chart-min" data-side="${side}" data-index="${idx}" type="number" step="any" value="${item.min ?? ''}">
-                          </div>
-                          <div class="col-12 col-md-3">
-                            <label class="form-label form-label-sm mb-1">Y max</label>
-                            <input class="form-control form-control-sm chart-max" data-side="${side}" data-index="${idx}" type="number" step="any" value="${item.max ?? ''}">
-                          </div>
-                          <div class="col-12 col-md-3">
-                            <label class="form-label form-label-sm mb-1">Y step</label>
-                            <input class="form-control form-control-sm chart-step" data-side="${side}" data-index="${idx}" type="number" step="any" min="0.000001" value="${item.step ?? ''}">
-                          </div>
-                          <div class="col-12 col-md-3 d-flex align-items-end">
-                            <button class="btn btn-outline-secondary btn-sm w-100 chart-auto-range" data-side="${side}" data-index="${idx}" type="button">Auto range</button>
-                          </div>
-                        </div>
-                      </div>
-                    `).join('');
-                  }
-
-                  function syncChartConfigInput() {
-                    if (!chartConfigInput || !browserPrefsInput) return;
-                    chartConfigInput.value = JSON.stringify(chartConfigState);
-                    const payload = { chart_config: chartConfigState, table: tablePrefsState };
-                    browserPrefsInput.value = JSON.stringify(payload);
-                    persistStationPrefs(payload);
-                    syncChartUrl();
-                  }
-
-                  function scheduleChartRefresh() {
-                    syncChartConfigInput();
-                    renderStationChart();
-                  }
-
-                  function renderChartSelector() {
-                    const selected = selectedFieldSet();
-                    renderSelectOptions(availableSel, allNumericCols.filter((field) => !selected.has(field)));
-                    renderSelectOptions(leftSel, chartConfigState.left.map((item) => item.field));
-                    renderSelectOptions(rightSel, chartConfigState.right.map((item) => item.field));
-                    renderAxisConfig('left', leftConfigEl);
-                    renderAxisConfig('right', rightConfigEl);
-                    syncChartConfigInput();
-                  }
-
-                  function moveAvailableTo(side) {
-                    if (!availableSel) return;
-                    Array.from(availableSel.selectedOptions).forEach((opt) => {
-                      const usedColors = new Set([
-                        ...chartConfigState.left.map((item) => item.color),
-                        ...chartConfigState.right.map((item) => item.color)
-                      ]);
-                      const nextColor = defaultChartColors.find((color) => !usedColors.has(color)) || defaultChartColors[0];
-                      const fieldDefaults = chartAxisDefaults[String(opt.value || '').trim().toLowerCase()] || {};
-                      chartConfigState[side].push({
-                        field: opt.value,
-                        type: 'line',
-                        min: fieldDefaults.min ?? null,
-                        max: fieldDefaults.max ?? null,
-                        step: fieldDefaults.step ?? null,
-                        color: nextColor
-                      });
-                    });
-                    renderChartSelector();
-                    scheduleChartRefresh();
-                  }
-
-                  function removeFrom(side, selectEl) {
-                    if (!selectEl) return;
-                    const selected = new Set(Array.from(selectEl.selectedOptions).map((o) => o.value));
-                    chartConfigState[side] = chartConfigState[side].filter((item) => !selected.has(item.field));
-                    renderChartSelector();
-                    scheduleChartRefresh();
-                  }
-
-                  document.getElementById('addLeftBtn')?.addEventListener('click', () => moveAvailableTo('left'));
-                  document.getElementById('addRightBtn')?.addEventListener('click', () => moveAvailableTo('right'));
-                  document.getElementById('removeLeftBtn')?.addEventListener('click', () => removeFrom('left', leftSel));
-                  document.getElementById('removeRightBtn')?.addEventListener('click', () => removeFrom('right', rightSel));
-
-                  chartForm.addEventListener('change', (event) => {
-                    const target = event.target;
-                    if (!(target instanceof HTMLElement)) return;
-                    const side = target.dataset.side;
-                    const index = Number(target.dataset.index);
-                    if (!side || !Number.isInteger(index) || !chartConfigState[side] || !chartConfigState[side][index]) return;
-                    const item = chartConfigState[side][index];
-                    if (target.classList.contains('chart-type')) {
-                      item.type = target.value === 'bar' ? 'bar' : 'line';
-                    } else if (target.classList.contains('chart-color')) {
-                      item.color = target.value || defaultChartColors[0];
-                    } else if (target.classList.contains('chart-min')) {
-                      item.min = target.value === '' ? null : Number(target.value);
-                    } else if (target.classList.contains('chart-max')) {
-                      item.max = target.value === '' ? null : Number(target.value);
-                    } else if (target.classList.contains('chart-step')) {
-                      item.step = target.value === '' ? null : Number(target.value);
-                    }
-                    scheduleChartRefresh();
-                  });
-
-                  chartForm.addEventListener('click', (event) => {
-                    const target = event.target;
-                    if (!(target instanceof HTMLElement) || !target.classList.contains('chart-auto-range')) return;
-                    const side = target.dataset.side;
-                    const index = Number(target.dataset.index);
-                    if (!side || !Number.isInteger(index) || !chartConfigState[side] || !chartConfigState[side][index]) return;
-                    const item = chartConfigState[side][index];
-                    const values = (numericSeriesAligned[item.field] || []).filter((v) => v !== null && Number.isFinite(Number(v))).map(Number);
-                    if (!values.length) return;
-                    // reduce(): Math.min(...values) overflows the call stack on long windows.
-                    let lo = values.reduce((a, b) => Math.min(a, b));
-                    let hi = values.reduce((a, b) => Math.max(a, b));
-                    if (lo === hi) {
-                      const pad = Math.max(1.0, Math.abs(lo) * 0.15);
-                      lo -= pad;
-                      hi += pad;
-                    } else {
-                      const pad = (hi - lo) * 0.15;
-                      lo -= pad;
-                      hi += pad;
-                    }
-                    const span = Math.max(hi - lo, 1e-9);
-                    const roughStep = span / 6;
-                    const exponent = Math.floor(Math.log10(roughStep));
-                    const fraction = roughStep / (10 ** exponent);
-                    let niceFraction = 1;
-                    if (fraction <= 1) niceFraction = 1;
-                    else if (fraction <= 2) niceFraction = 2;
-                    else if (fraction <= 5) niceFraction = 5;
-                    else niceFraction = 10;
-                    const step = niceFraction * (10 ** exponent);
-                    item.min = Number((Math.floor(lo / step) * step).toFixed(6));
-                    item.max = Number((Math.ceil(hi / step) * step).toFixed(6));
-                    item.step = Number(step.toFixed(6));
-                    renderChartSelector();
-                    scheduleChartRefresh();
-                  });
-
-                  if (chartExportBtn) {
-                    chartExportBtn.addEventListener('click', () => {
-                      syncChartConfigInput();
-                      const payload = {
-                        instrument_uuid: {{ instrument_uuid | tojson }},
-                        exported_at: new Date().toISOString(),
-                        chart_config: chartConfigState,
-                        table: tablePrefsState,
-                      };
-                      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = `${({{ instrument_uuid | tojson }} || 'station')}_chart_preferences.json`;
-                      a.click();
-                      URL.revokeObjectURL(url);
-                    });
-                  }
-
-                  if (chartImportFile) {
-                    chartImportFile.addEventListener('change', async () => {
-                      const file = chartImportFile.files && chartImportFile.files[0];
-                      if (!file) return;
-                      try {
-                        const payload = JSON.parse(await file.text());
-                        if (!payload || typeof payload.chart_config !== 'object') {
-                          window.alert('Invalid chart preferences JSON file.');
-                          return;
-                        }
-                        chartConfigState.left = Array.isArray(payload.chart_config.left) ? payload.chart_config.left : [];
-                        chartConfigState.right = Array.isArray(payload.chart_config.right) ? payload.chart_config.right : [];
-                        if (payload.table && typeof payload.table === 'object') {
-                          tablePrefsState.page_size = ['50','100','250','window'].includes(String(payload.table.page_size)) ? String(payload.table.page_size) : tablePrefsState.page_size;
-                          tablePrefsState.visible_columns = Array.isArray(payload.table.visible_columns) ? payload.table.visible_columns : tablePrefsState.visible_columns;
-                        }
-                        renderChartSelector();
-                        scheduleChartRefresh();
-                      } catch (_) {
-                        window.alert('Invalid chart preferences JSON file.');
-                      } finally {
-                        chartImportFile.value = '';
-                      }
-                    });
-                  }
-
-                  renderChartSelector();
-                }
-                renderStationChart();
-                const tablePrefsForm = document.getElementById('tablePrefsForm');
-                if (tablePrefsForm) {
-                  const pageSizeSel = document.getElementById('tablePageSize');
-                  const tableBrowserPrefsInput = document.getElementById('tableBrowserPrefsInput');
-                  let intervalPanel = document.getElementById('intervalPanel');
-                  let tableWrap = document.getElementById('tableWrap');
-                  let dataTableSection = document.getElementById('dataTableSection');
-                  let statisticsSection = document.getElementById('statisticsSection');
-
-                  function syncTablePrefsInput() {
-                    const payload = { chart_config: chartConfigState, table: tablePrefsState };
-                    if (tableBrowserPrefsInput) tableBrowserPrefsInput.value = JSON.stringify(payload);
-                    persistStationPrefs(payload);
-                  }
-
-                  function refreshTableRefs() {
-                    intervalPanel = document.getElementById('intervalPanel');
-                    tableWrap = document.getElementById('tableWrap');
-                    dataTableSection = document.getElementById('dataTableSection');
-                    statisticsSection = document.getElementById('statisticsSection');
-                  }
-
-                  async function updateTableFromUrl(href) {
-                    try {
-                      const resp = await fetch(href, { cache: 'no-store' });
-                      if (!resp.ok) return;
-                      const html = await resp.text();
-                      const doc = new DOMParser().parseFromString(html, 'text/html');
-                      const nextState = parseStationBrowseStateFromDocument(doc);
-                      const nextDataTableSection = doc.getElementById('dataTableSection');
-                      const nextStatisticsSection = doc.getElementById('statisticsSection');
-                      const nextIntervalPanel = doc.getElementById('intervalPanel');
-                      if (!nextDataTableSection || !nextStatisticsSection || !dataTableSection || !statisticsSection) {
-                        window.location.href = href;
-                        return;
-                      }
-                      applyServerState(nextState);
-                      if (intervalPanel && nextIntervalPanel) {
-                        intervalPanel.replaceWith(nextIntervalPanel);
-                      }
-                      dataTableSection.replaceWith(nextDataTableSection);
-                      statisticsSection.replaceWith(nextStatisticsSection);
-                      window.history.replaceState({}, '', href);
-                      refreshTableRefs();
-                      bindIntervalForm();
-                      renderChartSelector();
-                      renderStationChart();
-                    } catch (_) {
-                      window.location.href = href;
-                    }
-                  }
-
-                  pageSizeSel?.addEventListener('change', () => {
-                    tablePrefsState.page_size = pageSizeSel.value;
-                    syncTablePrefsInput();
-                    tablePrefsForm.requestSubmit();
-                  });
-
-                  document.addEventListener('click', (event) => {
-                    const target = event.target;
-                    if (!(target instanceof HTMLElement)) return;
-                    const link = target.closest('.table-page-link');
-                    if (!(link instanceof HTMLAnchorElement)) return;
-                    event.preventDefault();
-                    syncTablePrefsInput();
-                    updateTableFromUrl(link.href);
-                  });
-
-                  document.addEventListener('change', (event) => {
-                    refreshTableRefs();
-                    if (!tableWrap || !tableWrap.contains(event.target)) return;
-                    const target = event.target;
-                    if (!(target instanceof HTMLInputElement) || !target.classList.contains('table-col-toggle')) return;
-                    const allToggles = Array.from(document.querySelectorAll('.table-col-toggle'));
-                    const checked = allToggles.filter((el) => el.checked).map((el) => el.value);
-                    tablePrefsState.visible_columns = checked.length ? checked : allToggles.map((el) => el.value);
-                    syncTablePrefsInput();
-                    tablePrefsForm.requestSubmit();
-                  });
-
-                  syncTablePrefsInput();
-                }
-                function bindIntervalForm() {
-                  const intervalSel = document.getElementById('intervalSelect');
-                  const intervalForm = document.getElementById('intervalForm');
-                  if (!intervalSel || !intervalForm || intervalSel.dataset.bound === '1') {
-                    return;
-                  }
-                  intervalSel.dataset.bound = '1';
-                  intervalSel.addEventListener('change', async () => {
-                    document.cookie = `station_trend_window=${encodeURIComponent(intervalSel.value)}; path=/; max-age=31536000; samesite=lax`;
-                    const prefsField = intervalForm.querySelector('input[name="browser_prefs"]');
-                    const browserPrefsInput = document.getElementById('browserPrefsInput');
-                    if (prefsField && browserPrefsInput) prefsField.value = browserPrefsInput.value;
-                    const formData = new FormData(intervalForm);
-                    const url = new URL(window.location.href);
-                    Array.from(url.searchParams.keys()).forEach((key) => url.searchParams.delete(key));
-                    for (const [key, value] of formData.entries()) {
-                      if (value !== '') url.searchParams.set(key, String(value));
-                    }
-                    try {
-                      const resp = await fetch(url.toString(), { cache: 'no-store' });
-                      if (!resp.ok) {
-                        window.location.href = url.toString();
-                        return;
-                      }
-                      const html = await resp.text();
-                      const doc = new DOMParser().parseFromString(html, 'text/html');
-                      const nextState = parseStationBrowseStateFromDocument(doc);
-                      const nextIntervalPanel = doc.getElementById('intervalPanel');
-                      const nextDataTableSection = doc.getElementById('dataTableSection');
-                      const nextStatisticsSection = doc.getElementById('statisticsSection');
-                      if (!nextState || !nextIntervalPanel || !nextDataTableSection || !nextStatisticsSection) {
-                        window.location.href = url.toString();
-                        return;
-                      }
-                      applyServerState(nextState);
-                      document.getElementById('intervalPanel')?.replaceWith(nextIntervalPanel);
-                      document.getElementById('dataTableSection')?.replaceWith(nextDataTableSection);
-                      document.getElementById('statisticsSection')?.replaceWith(nextStatisticsSection);
-                      window.history.replaceState({}, '', url.toString());
-                      if (typeof refreshTableRefs === 'function') refreshTableRefs();
-                      bindIntervalForm();
-                      renderChartSelector();
-                      renderStationChart();
-                    } catch (_) {
-                      window.location.href = url.toString();
-                    }
-                  });
-                }
-                bindIntervalForm();
-              </script>
-            </body>
-            </html>
-            """,
+            STATION_BROWSER_TEMPLATE,
             instrument_uuid=instrument_uuid,
             station_name=station_name,
             user=user,
@@ -4605,47 +4854,35 @@ def create_web_app(cfg: dict, access_store: AccessStore):
             station_logo_url=station_logo_url,
             interval=interval,
             interval_options=TREND_INTERVALS,
-            interval_label=interval_label,
             chart_step=chart_step,
-            win_start=win_start.isoformat().replace("+00:00", "Z"),
-            win_end=win_end.isoformat().replace("+00:00", "Z"),
-            prev_anchor=prev_anchor,
-            next_anchor=next_anchor,
-            rows=rows,
+            win_start=iso(window["win_start"]),
+            win_end=iso(window["win_end"]),
+            range_args=range_args,
+            prev_args=prev_args,
+            next_args=next_args,
+            is_latest=is_latest,
             numeric_cols=numeric_cols,
-            chart_config=chart_config,
-            chart_config_json=chart_config_json,
-            chart_cookie_name=chart_cookie_name,
-            browser_prefs_cookie_name=browser_prefs_cookie_name,
-            browser_prefs_json=browser_prefs_json,
-            table_prefs=table_prefs,
-            page_size_pref=page_size_pref,
-            selected_fields=selected_fields,
             default_chart_colors=DEFAULT_CHART_COLORS,
             table_rows=table_rows,
-            table_cols=table_cols,
             all_table_columns=all_table_columns,
-            visible_column_set=visible_column_set,
             table_column_stats=table_column_stats,
-            table_headers=table_headers,
             units_map=units_map,
             page=page,
             page_count=page_count,
             page_size=page_size,
+            page_sizes=STATION_BROWSER_PAGE_SIZES,
+            order=order,
             total_rows=total_rows,
             start_idx=start_idx,
-            end_idx=end_idx,
-            request=request,
+            end_idx=min(start_idx + page_size, total_rows),
+            max_custom_days=STATION_BROWSER_MAX_CUSTOM_DAYS,
             station_browse_state_json=json_for_script(
                 {
                     "chart_labels": chart_labels,
-                    "chart_datasets": chart_datasets,
-                    "chart_y_axes": chart_y_axes,
                     "numeric_cols": numeric_cols,
                     "all_table_columns": all_table_columns,
                     "units_map": units_map,
                     "numeric_series_aligned": numeric_series_aligned,
-                    "chart_axis_defaults": chart_axis_defaults,
                 }
             ),
         )

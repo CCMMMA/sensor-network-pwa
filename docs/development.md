@@ -31,7 +31,7 @@ values, watchdog resilience, enforced password changes, rows longer than the CSV
 header, map popup escaping, session-secret fallback, the onboarding-only username
 check, email validation of account requests, hiding of restricted stations, selection
 of hourly files, the unchanged-poll shortcut, response compression, chart thinning,
-dashboard cards for interleaved device rows, the administration page actions, and the
+dashboard cards for interleaved device rows, the administration page actions, station page ranges, paging and CSV export, and the
 progressive web app assets (doctype, manifest, icons, service worker).
 
 ## Container checks

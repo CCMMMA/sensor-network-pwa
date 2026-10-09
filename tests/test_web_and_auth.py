@@ -447,6 +447,65 @@ class WebAndAuthTests(unittest.TestCase):
         token = body.split("complete?token=")[1].split("<")[0].strip()
         self.assertEqual(self.store.complete_account_request(token, "newuser", STRONG), (True, "Account created"))
 
+    def test_station_page_time_ranges_paging_and_order(self):
+        for minutes in range(1, 121):
+            dt = self.now - timedelta(minutes=minutes)
+            self.write_row("paged", dt, {"timestamp": dt.isoformat(), "TempOut": minutes})
+        client = self.client("bob")
+
+        def page(**args):
+            body = client.get("/station/paged", query_string=args).get_data(as_text=True)
+            first = body.split('<tbody>')[1].split("</tr>")[0]
+            return body, first
+
+        body, first = page(interval="3h")
+        self.assertIn("<b>120</b> rows", body)
+        self.assertIn("Page 1 of 3", body)
+        self.assertIn(">120<", first)  # oldest first
+        body, first = page(interval="3h", order="desc", page_size="100", page="2")
+        self.assertIn("Page 2 of 2", body)
+        self.assertIn(">101<", first)  # newest first: page 2 starts at the 101st newest row
+        body, _ = page(interval="hour")
+        self.assertIn("<b>61</b> rows", body)  # both ends of the hour are included
+        # A remembered page size comes from the cookie; an unknown one falls back to 50.
+        client.set_cookie("station_page_size", "250")
+        self.assertIn("Page 1 of 1", page(interval="3h")[0])
+        self.assertIn("Page 1 of 3", page(interval="3h", page_size="7")[0])
+
+        day = self.now.date().isoformat()
+        body, _ = page(from_date=day, to_date=day)
+        self.assertIn("custom dates", body)
+        self.assertEqual(client.get("/station/paged", query_string={
+            "from_date": "2024-01-01", "to_date": "2024-03-01"}).status_code, 400)
+        empty = client.get("/station/paged", query_string={"interval": "hour", "anchor": "2020-01-01T00:00:00Z"})
+        self.assertEqual(empty.status_code, 200)
+        self.assertIn("No data in this time range", empty.get_data(as_text=True))
+        anonymous = self.client().get("/station/paged")
+        self.assertEqual(anonymous.status_code, 302)
+        self.assertIn("/login", anonymous.headers["Location"])
+
+    def test_station_csv_export_matches_the_selected_range(self):
+        for minutes in (90, 30, 10):
+            dt = self.now - timedelta(minutes=minutes)
+            self.write_row("csvst", dt, {"timestamp": dt.isoformat(), "TempOut": minutes, "HumOut": 50, "note": "a,b"})
+        client = self.client("bob")
+        response = client.get("/station/csvst/export.csv", query_string={"interval": "hour"})
+        self.assertEqual(response.mimetype, "text/csv")
+        self.assertIn("attachment; filename=", response.headers["Content-Disposition"])
+        rows = list(csv.DictReader(io.StringIO(response.get_data(as_text=True))))
+        self.assertEqual([row["TempOut"] for row in rows], ["30", "10"])
+        self.assertEqual(rows[0]["note"], "a,b")
+        response = client.get("/station/csvst/export.csv", query_string={
+            "interval": "3h", "col": ["timestamp", "HumOut", "missing"]})
+        lines = response.get_data(as_text=True).splitlines()
+        self.assertEqual(lines[0], "timestamp,HumOut")
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(client.get("/station/csvst/export.csv", query_string={
+            "interval": "hour", "anchor": "2020-01-01T00:00:00Z"}).status_code, 404)
+        self.store.set_policy("csvst", "restricted", "admin")
+        self.assertEqual(client.get("/station/csvst/export.csv").status_code, 403)
+        self.assertEqual(self.client().get("/station/csvst/export.csv").status_code, 302)
+
     def test_config_needs_no_collector_settings(self):
         self.assertFalse(self.cfg["enable_influx"])
         self.assertTrue(self.cfg["auth_db_path"].endswith("collector_auth.sqlite"))

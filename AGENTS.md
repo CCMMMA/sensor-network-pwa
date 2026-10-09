@@ -27,6 +27,7 @@
 - chart and public-dashboard models (`build_public_station_snapshot`, axis helpers)
 - anomaly evaluation and the watchdog loop
 - progressive web app assets (`PWA_SERVICE_WORKER_JS`, `PWA_BODY_SNIPPET`, `build_pwa_icon_png`)
+- `STATION_BROWSER_TEMPLATE`: the station data page (chart setup, SVG/PNG publication export and table controls run in the browser)
 - `create_web_app`: every Flask route, with HTML/JS templates inline as `render_template_string`; the `add_pwa_markup` response hook adds the manifest link and service-worker registration to every page
 - `main()`; `webapp_wsgi.py` builds the same app for Gunicorn without the watchdog
 

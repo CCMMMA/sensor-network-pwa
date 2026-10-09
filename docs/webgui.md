@@ -27,7 +27,8 @@ Set (see [configuration](configuration.md)):
 - `/request-account/complete?token=...`
 - `/change-password`
 - `/fast-login?token=...`
-- `/station/<uuid>` station browser + chart + download
+- `/station/<uuid>` station data page: chart, table, statistics, downloads
+- `/station/<uuid>/export.csv` CSV of the selected time range
 - `/station/<uuid>/chart-settings` station trend-chart Y-axis settings
 - `/station/<uuid>/chart-settings/export`
 - `/station/<uuid>/chart-settings/import`
@@ -70,8 +71,8 @@ The home page station map and browse/download list use a lightweight latest-samp
 - the public dashboard polls every 5 seconds with the timestamp it already shows; while the station has not stored a newer row the answer is `{"changed": false}`, without rebuilding the trends
 - when InfluxDB is enabled it is queried from the start of the displayed window
 - HTML, JSON and JavaScript responses larger than 1 kB are gzip-compressed for browsers that accept it (a reverse proxy does not need to compress them again)
-- the station browser embeds each series once; on windows with more than 3000 rows the chart shows an evenly thinned series (the page says how many samples are skipped) while the table and the statistics use every row
-- choosing the `window` page size on a long window still renders every row in the table and produces a very large page
+- the station data page embeds each series once; on ranges with more than 3000 rows the chart shows an evenly thinned series (the page says how many samples are skipped) while the table, the statistics and the CSV use every row
+- the station data table shows at most 1000 rows per page; whole ranges are downloaded as CSV
 
 ## Access policies
 
@@ -136,63 +137,74 @@ Chart setup rights are separate from download/browse rights.
 
 This is used for the Public Station Dashboard trend charts only.
 
-## Station browser chart and table preferences
+## Station data page
 
-The authenticated station browser page `/station/<uuid>` has its own user-side browsing preferences.
+`/station/<uuid>` is the page for browsing, plotting and downloading the data of one
+station. It needs data access to the station; anonymous visitors of a non-open station
+are sent to the login page.
 
-Units shown in the authenticated station browser follow the raw MQTT/storage field units, not the Signal K converted metadata units. For example, `WindDir` is shown as `deg` in the station browser even if Signal K metadata for the mapped path uses `rad`.
+Units shown follow the raw MQTT/storage field units, not the Signal K converted metadata
+units (`WindDir` is shown as `deg` even if the Signal K path uses `rad`).
 
-Chart section:
+### Time range
 
-- available parameters in the center
-- selected left-axis parameters on the left
-- selected right-axis parameters on the right
-- each selected parameter can define:
-  - chart type (`line` or `bar`)
-  - color
-  - `y_min`
-  - `y_max`
-  - `y_step`
-- each selected parameter has an `Auto range` action that computes `y_min`, `y_max`, and `y_step` from the parameter time series in the currently selected trend window
-- when a selected parameter has no explicit `y_min`, `y_max`, or `y_step`, the browser uses the same automatic range logic used by the Public Station Dashboard for the matching metric
-- chart updates automatically in place when parameters are moved or visualization options are changed, without reloading the full page
+- `Time window` selects the length (from one minute to one week); `Earlier` and `Later`
+  move by one window and `Latest` returns to the newest data. The chosen length is
+  remembered in a cookie.
+- `Show these dates` selects whole UTC days instead, at most 31 days. Longer periods are
+  available as raw files (see below).
+- The latest window ends at the newest row of the station.
+- A range without data shows a notice and keeps the navigation, instead of jumping to
+  other data.
 
-Table section:
+### Chart
 
-- rows per page can be selected as:
-  - `50`
-  - `100`
-  - `250`
-  - `Trend window`
-- `Trend window` shows all rows in the current trend window
-- each table header embeds its own checkbox for show/hide control
-- when a column is hidden, its header collapses to checkbox width and the full title remains available as tooltip
-- prev/next page navigation updates the table and statistics in place without reloading the whole page
-- the `Statistics` area is shown after the `Data table` section and reflects the current visible numeric parameters in the current trend window
-- each statistics card shows:
-  - minimum and the timestamp when it occurred
-  - maximum and the timestamp when it occurred
-  - average
-  - standard deviation
+- `Parameters` lists every numeric parameter of the range with a search box. `L` and `R`
+  plot a parameter on the left or right axis; pressing the active button removes it.
+  Plotted parameters are listed first.
+- Parameters with the same unit on the same side share one axis, so that for example
+  three temperatures use a single scale. Parameters without a unit get an axis each.
+- Each plotted series has a colour, a type (line or bars), its axis side and a `Remove`
+  button. Each axis has optional `Min`, `Max` and `Step`; empty fields are automatic and
+  follow the data when the time range changes. `Auto range` clears them.
+- The time axis is linear in time (gaps in the data appear as gaps) and labelled in UTC.
+- On ranges with more than 3000 rows the chart shows an evenly thinned series and the
+  page says so; the table, the statistics and the CSV files keep every row.
+- The chart setup is remembered per station in the browser (`localStorage`).
+  `Save chart setup` / `Load chart setup` write and read it as a JSON file, also to move
+  it to another browser.
 
-Persistence:
+### Publication-quality plots
 
-- station browser preferences are persisted per station in browser `localStorage`
-- the same preference object stores:
-  - chart selection and left/right assignment
-  - chart type
-  - chart color
-  - chart `y_min`
-  - chart `y_max`
-  - chart `y_step`
-  - table page size
-  - visible columns
-- large station-browser preference payloads are not stored in cookies, which avoids reverse-proxy `Request Header Or Cookie Too Large` failures on subsequent requests
+`Download plot…` exports the chart as shown, with these options:
 
-Import/export:
+- figure size: single column (90 × 60 mm), 1.5 columns (140 × 85 mm), double column
+  (190 × 100 mm), or 16:9 slide (254 × 143 mm)
+- font (sans-serif or serif) and text size in points, optional title, legend and grid
+- black and white: black lines with different dash patterns and grey bars
+- `Download SVG (vector)`: a standalone SVG with the physical size set, real text and
+  no raster content; it can be edited or converted to PDF/EPS
+- `Download PNG`: a white-background image at 300, 600 or 1200 dpi whose file records
+  the resolution, so it imports at the chosen physical size
 
-- station browser preferences can be exported/imported as JSON from the chart section
-- the JSON file includes both chart preferences and table preferences
+Both are produced in the browser; nothing is sent to the server.
+
+### Data table and downloads
+
+- `Download this range (CSV)`: one CSV file with every row of the selected range and
+  the columns currently shown (`/station/<uuid>/export.csv`, which takes the same
+  `interval`/`anchor` or `from_date`/`to_date` arguments as the page and optional
+  repeated `col` arguments)
+- `Plotted data (CSV)`: the same, limited to the timestamp and the plotted parameters
+- `Raw files (ZIP)…`: the original hourly files for any period, pre-filled with the
+  dates of the range
+- `Rows per page` (50, 100, 250, 1000) and `Order` (oldest or newest first) are
+  remembered in cookies; the pager has first, previous, next and last
+- `Columns` shows or hides columns, with `Show all` and `Only timestamp and plotted`;
+  the choice is remembered per station in the browser
+- `Statistics of this range` lists, for every numeric parameter, the number of samples,
+  minimum and maximum with their times, mean and standard deviation, over all rows of
+  the range
 
 ## Public station chart axis settings
 
