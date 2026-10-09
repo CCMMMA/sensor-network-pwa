@@ -2085,6 +2085,9 @@ PUBLIC_METRIC_SPECS = [
     {"key": "pm10", "label": "PM10", "aliases": ["pm_10", "PM10"], "unit": "ug/m3"},
 ]
 
+# Rows searched, newest first, for the current value of a dashboard card.
+PUBLIC_CARD_LOOKBACK_ROWS = 10
+
 PUBLIC_SERIES_SPECS = [
     {
         "key": "temperature",
@@ -2543,9 +2546,20 @@ def build_public_station_snapshot(
     rows_ts = [(ts, row) for ts, row in rows_ts_all if ts >= win_start]
     rows_ts = _decimate_timeseries(rows_ts, max_points)
 
+    # A station can interleave rows from different devices (weather, air quality), so
+    # a value missing from the latest row is taken from the few rows before it.
+    recent_rows = [row for _, row in reversed(rows_ts_all[-PUBLIC_CARD_LOOKBACK_ROWS:])] or [latest_row]
+
+    def latest_value(aliases):
+        for row in recent_rows:
+            value = _first_numeric_for_aliases(row, aliases)
+            if value is not None:
+                return value
+        return None
+
     cards = []
     for spec in PUBLIC_METRIC_SPECS:
-        value = _first_numeric_for_aliases(latest_row, spec["aliases"])
+        value = latest_value(spec["aliases"])
         cards.append(
             {
                 "key": spec["key"],
@@ -2555,7 +2569,7 @@ def build_public_station_snapshot(
             }
         )
 
-    aqi_status = _aqi_status(_first_numeric_for_aliases(latest_row, ["aqi_val", "AQI", "CurrentAQI", "aqi"]))
+    aqi_status = _aqi_status(latest_value(["aqi_val", "AQI", "CurrentAQI", "aqi"]))
 
     chart_specs = {spec["key"]: spec for spec in resolve_station_chart_specs(access_store, instrument_uuid)}
 
@@ -4737,6 +4751,7 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                 const chartCards = {};
                 const windowSelect = document.getElementById('windowSelect');
                 let focusedChartKey = {{ selected_focus | tojson }};
+                let renderedWindow = currentWindow;
                 const appLogoUrl = {{ app_logo_url | tojson }};
                 const stationLogoUrl = {{ station_logo_url | tojson }};
                 const colors = ['#0d6efd', '#20c997', '#fd7e14', '#6f42c1', '#dc3545', '#198754', '#6c757d'];
@@ -4818,7 +4833,8 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                   const dayChanged = !prevDate || prevDate.toDateString() !== d.toDateString();
                   const timeLabel = formatWindowTick(value, windowCode);
                   if (dayChanged) {
-                    return `${d.toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} ${timeLabel}`;
+                    // Two lines: the date under the time keeps the label as narrow as the others.
+                    return [timeLabel, d.toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })];
                   }
                   return timeLabel;
                 }
@@ -4898,6 +4914,8 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                   const xMin = snapshot.window_start ? Date.parse(snapshot.window_start) : undefined;
                   const xMax = snapshot.window_end ? Date.parse(snapshot.window_end) : undefined;
                   const customTicks = buildWindowTicks(snapshot.window || currentWindow, xMin, xMax);
+                  // Shared with the double-click handlers, which are bound when a chart is first drawn.
+                  renderedWindow = snapshot.window || currentWindow;
                   const renderStats = (stats, unit) => {
                     const items = Array.isArray(stats) ? stats.filter(Boolean) : (stats ? [stats] : []);
                     if (!items.length) {
@@ -4946,7 +4964,7 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                       const titleEl = col.querySelector('.chart-title');
                       if (titleEl) {
                         const baseLabel = col.dataset.chartLabel || '';
-                        titleEl.textContent = isFocused ? `${baseLabel} - ${windowLabel(snapshot.window || currentWindow)}` : baseLabel;
+                        titleEl.textContent = isFocused ? `${baseLabel} - ${windowLabel(renderedWindow)}` : baseLabel;
                       }
                     });
                     syncFocusUrl();
@@ -5004,9 +5022,23 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                         min: xMin,
                         max: xMax,
                         afterBuildTicks: (axis) => {
-                          axis.ticks = customTicks.map((tick) => ({ value: tick }));
+                          // Keep the ticks whose level labels fit side by side, starting
+                          // from the newest one: the height is left to the plot.
+                          const span = axis.max - axis.min;
+                          const minGapPx = 72;
+                          let lastPx = Infinity;
+                          const kept = [];
+                          for (let i = customTicks.length - 1; i >= 0; i -= 1) {
+                            const px = span > 0 ? ((customTicks[i] - axis.min) / span) * axis.width : 0;
+                            if (lastPx - px < minGapPx) continue;
+                            lastPx = px;
+                            kept.unshift({ value: customTicks[i] });
+                          }
+                          axis.ticks = kept;
                         },
                         ticks: {
+                          maxRotation: 0,
+                          autoSkip: false,
                           callback: (value, index, ticks) => {
                             return formatWindowTickWithDayChange(value, snapshot.window || currentWindow, index, ticks);
                           }

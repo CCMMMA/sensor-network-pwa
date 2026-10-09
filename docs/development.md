@@ -30,7 +30,8 @@ handling, sandboxed logo serving, download cleanup, limited row loading, non-fin
 values, watchdog resilience, enforced password changes, rows longer than the CSV
 header, map popup escaping, session-secret fallback, the onboarding-only username
 check, email validation of account requests, hiding of restricted stations, selection
-of hourly files, the unchanged-poll shortcut, response compression, chart thinning, and the
+of hourly files, the unchanged-poll shortcut, response compression, chart thinning,
+dashboard cards for interleaved device rows, and the
 progressive web app assets (doctype, manifest, icons, service worker).
 
 ## Container checks

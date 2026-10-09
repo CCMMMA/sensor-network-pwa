@@ -369,6 +369,16 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertEqual(len(state["numeric_series_aligned"]["TempOut"]), len(state["chart_labels"]))
         self.assertIn("all 10 rows", body)
 
+    def test_cards_use_recent_rows_of_interleaved_devices(self):
+        for seconds, row in ((40, {"TempOut": 18, "HumOut": 70}), (20, {"pm_10": 4}), (0, {"TempOut": 19})):
+            dt = self.now - timedelta(seconds=seconds)
+            self.write_row("mixed", dt, {"timestamp": dt.isoformat(), "TempOut": "", "HumOut": "", "pm_10": "", **row})
+        snapshot = main.build_public_station_snapshot(
+            self.cfg["storage_root"], "mixed", cfg=self.cfg, access_store=self.store)
+        cards = {card["key"]: card["value"] for card in snapshot["cards"]}
+        self.assertEqual((cards["temperature"], cards["humidity"], cards["pm10"]), (19, 70, 4))
+        self.assertIsNone(cards["pressure"])
+
     def test_config_needs_no_collector_settings(self):
         self.assertFalse(self.cfg["enable_influx"])
         self.assertTrue(self.cfg["auth_db_path"].endswith("collector_auth.sqlite"))

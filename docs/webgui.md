@@ -309,6 +309,9 @@ Behavior details:
 - logo files are served with a sandboxing `Content-Security-Policy`, so scripts embedded in an SVG never run
 - public station page shows app logo + station logo together
 - public station dashboard trend charts update in-place without full page reload
+- the cards show the latest value of each metric, looking back up to 10 rows when the newest row lacks it; this keeps all cards visible for stations whose devices (for example weather and air quality) report in separate rows
+- time-axis labels are level, with the date on a second line where the day changes; only the labels that fit side by side are drawn, always including the newest time, which leaves most of the card height to the plot
+- the title of a focused chart (double-click) names the trend window currently displayed
 - existing chart instances are reused and updated with fresh points and axes instead of being recreated on each polling cycle
 - each public trend chart shows parameter units on the Y-axis
 - public station dashboard trend window can be selected as:
