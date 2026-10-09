@@ -436,6 +436,38 @@ class WebAndAuthTests(unittest.TestCase):
         admin.post("/admin/force-password", data={"username": "bob", "force": "0"})
         self.assertEqual(self.store.get_user("bob")["force_password_change"], 0)
 
+    def test_admin_can_set_user_password(self):
+        admin = self.client("admin")
+        new_password = "Adm1n!AssignedPassword"
+
+        body = admin.get("/admin").get_data(as_text=True)
+        self.assertIn('action="/admin/set-password"', body)
+
+        response = admin.post("/admin/set-password", data={
+            "username": "bob", "password": new_password, "password2": "different",
+        })
+        self.assertEqual(response.headers["Location"], "/admin#users")
+        self.assertIsNotNone(self.store.authenticate("bob", STRONG))
+
+        admin.post("/admin/set-password", data={
+            "username": "bob", "password": "weak", "password2": "weak",
+        })
+        self.assertIsNotNone(self.store.authenticate("bob", STRONG))
+
+        admin.post("/admin/set-password", data={
+            "username": "bob", "password": new_password, "password2": new_password,
+            "force_password_change": "1",
+        })
+        self.assertIsNone(self.store.authenticate("bob", STRONG))
+        self.assertIsNotNone(self.store.authenticate("bob", new_password))
+        self.assertEqual(self.store.get_user("bob")["force_password_change"], 1)
+
+        non_admin = self.app.test_client()
+        non_admin.post("/login", data={"username": "bob", "password": new_password})
+        self.assertEqual(non_admin.post("/admin/set-password", data={
+            "username": "admin", "password": new_password, "password2": new_password,
+        }).status_code, 403)
+
     def test_approval_without_email_shows_the_onboarding_link(self):
         self.store.create_account_request("new@example.org", "please")
         request_id = self.store.list_account_requests("pending")[0]["id"]

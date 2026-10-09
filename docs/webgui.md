@@ -105,8 +105,9 @@ returns to the tab it was started from (`/admin#users`, `/admin#stations`,
   - a table of all stations with a `Data access` and a `Chart settings` checkbox per
     station; data access can be chosen only for stations with the Restricted policy,
     the others show "Yes, by policy"
-  - account actions: change the email, ask for (or stop asking for) a new password,
-    make administrator / regular user, disable / enable the account
+  - account actions: change the email, assign a strong password (optionally requiring
+    another change at next login), ask for or stop asking for a new password, make
+    administrator / regular user, disable / enable the account
 - **Stations**: name, UUID, time of the last data, policy (saved as soon as it is
   changed), how many users have rights, and links to the dashboard, the data browser
   and the chart settings. `Users` opens the same rights table seen from the station:
@@ -124,7 +125,7 @@ Rules enforced by the server:
 
 Form endpoints (all `POST`, admin only): `/admin/create-user`, `/admin/user-update`,
 `/admin/user-permissions`, `/admin/station-permissions`, `/admin/policy`,
-`/admin/force-password`, `/admin/requests/<id>/approve`, `/admin/requests/<id>/reject`,
+`/admin/force-password`, `/admin/set-password`, `/admin/requests/<id>/approve`, `/admin/requests/<id>/reject`,
 and the single-assignment `/admin/user-access` and `/admin/user-control`.
 
 ## Chart control rights
@@ -304,7 +305,7 @@ SMTP fallback behavior:
 
 ## Password management
 
-- admin can force user password change
+- admin can assign a strong password to any user and can force another password change
 - forced users are redirected to `/change-password` at login and on every other page
   until the password is changed; form submissions and `/api/` calls return
   `403 Password change required` meanwhile

@@ -946,15 +946,15 @@ class AccessStore:
                     return False, "User not found"
         return True, "Password-change policy updated"
 
-    def change_password(self, username: str, new_password: str):
+    def change_password(self, username: str, new_password: str, force_password_change: bool = False):
         ok, password_msg = validate_password_strength(new_password)
         if not ok:
             return False, password_msg
         with self._lock:
             with self._connect() as con:
                 cur = con.execute(
-                    "UPDATE users SET password_hash = ?, force_password_change = 0 WHERE username = ?",
-                    (generate_password_hash(new_password), username.strip()),
+                    "UPDATE users SET password_hash = ?, force_password_change = ? WHERE username = ?",
+                    (generate_password_hash(new_password), 1 if force_password_change else 0, username.strip()),
                 )
                 if cur.rowcount <= 0:
                     return False, "User not found"
@@ -6299,6 +6299,25 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                                   <input class="form-control" type="email" name="email" value="{{ u.email or '' }}" aria-label="Email of {{ u.username }}">
                                   <button class="btn btn-outline-primary" type="submit">Save</button>
                                 </form>
+                                <form method="post" action="{{ url_for('admin_set_password') }}" class="card card-body p-2 mb-2">
+                                  <input type="hidden" name="username" value="{{ u.username }}">
+                                  <div class="row g-2">
+                                    <div class="col-sm-6">
+                                      <label class="form-label small" for="password-{{ loop.index }}">New password</label>
+                                      <input class="form-control form-control-sm" id="password-{{ loop.index }}" name="password" type="password" required minlength="12" autocomplete="new-password">
+                                    </div>
+                                    <div class="col-sm-6">
+                                      <label class="form-label small" for="password2-{{ loop.index }}">Confirm password</label>
+                                      <input class="form-control form-control-sm" id="password2-{{ loop.index }}" name="password2" type="password" required minlength="12" autocomplete="new-password">
+                                    </div>
+                                  </div>
+                                  <div class="form-check mt-2">
+                                    <input class="form-check-input" id="force-password-{{ loop.index }}" name="force_password_change" type="checkbox" value="1">
+                                    <label class="form-check-label small" for="force-password-{{ loop.index }}">Ask for a new password at the next login</label>
+                                  </div>
+                                  <div class="mt-2"><button class="btn btn-outline-primary btn-sm" type="submit">Set password</button></div>
+                                  <div class="form-text">At least 12 characters with upper and lower case, a digit and a symbol.</div>
+                                </form>
                                 <div class="d-flex flex-wrap gap-2">
                                   <form method="post" action="{{ url_for('admin_force_password') }}">
                                     <input type="hidden" name="username" value="{{ u.username }}">
@@ -7214,6 +7233,24 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                 if force
                 else f"{username} is no longer asked to change password"
             )
+        return admin_done("users", ok, msg)
+
+    @app.route("/admin/set-password", methods=["POST"])
+    def admin_set_password():
+        admin_user = require_admin()
+        if not isinstance(admin_user, dict):
+            return admin_user
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        password2 = request.form.get("password2", "")
+        if password != password2:
+            return admin_done("users", False, "Passwords do not match")
+        force = parse_boolish(request.form.get("force_password_change"), False)
+        ok, msg = access_store.change_password(username, password, force_password_change=force)
+        if ok:
+            msg = f"Password for {username} updated"
+            if force:
+                msg += "; a new password will be required at the next login"
         return admin_done("users", ok, msg)
 
     return app
