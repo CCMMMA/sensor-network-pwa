@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Profile{% endblock %}
+{% block body %}
+  <p>
+    <a href="{{ url_for('index') }}">Home</a> |
+    <a href="{{ url_for('anomalies_log') }}">Anomalies log</a> |
+    <a href="{{ url_for('change_password') }}">Change password</a> |
+    <a href="{{ url_for('logout') }}">Logout</a>
+  </p>
+  <h1 class="h4">Profile</h1>
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+    <div class="alert alert-{{ category }}">{{ message }}</div>
+  {% endfor %}
+  <dl class="row mb-4">
+    <dt class="col-sm-2">Username</dt><dd class="col-sm-10">{{ user.username }}</dd>
+    <dt class="col-sm-2">Email</dt><dd class="col-sm-10">{{ user.email or 'not set: no notification emails are sent' }}</dd>
+    <dt class="col-sm-2">Role</dt><dd class="col-sm-10">{{ user.role }}</dd>
+  </dl>
+
+  <h2 class="h5" id="notifications">Notifications</h2>
+  <p class="text-muted small">
+    You get an email when a station you can access starts failing and when it is back to regular.
+    While the failure persists, a reminder is sent at each notification time.
+  </p>
+  <form method="post" action="{{ url_for('profile_notification_interval') }}" class="row g-2 align-items-end mb-3">
+    <div class="col-auto">
+      <label class="form-label" for="notification-minutes">Notification time</label>
+      <select class="form-select form-select-sm" id="notification-minutes" name="minutes">
+        {% for minutes, label in interval_choices %}
+          <option value="{{ minutes }}" {% if minutes == interval_min %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto"><button class="btn btn-primary btn-sm" type="submit">Save</button></div>
+  </form>
+
+  <div class="table-responsive">
+  <table class="table table-sm table-bordered align-middle">
+    <thead>
+      <tr><th>Status</th><th>Station</th><th>Anomaly</th><th>Failing since</th><th>Ended</th><th>Last email</th><th>State</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+    {% for n in notifications %}
+      <tr>
+        <td>{% if n.is_open %}<span class="badge text-bg-danger">Failure</span>{% else %}<span class="badge text-bg-success">Regular</span>{% endif %}</td>
+        <td><a href="{{ url_for('browse_station', instrument_uuid=n.station_uuid) }}">{{ n.station_uuid }}</a></td>
+        <td>{{ n.anomaly_type }}{% if n.message %}<div class="small text-muted">{{ n.message }}</div>{% endif %}</td>
+        <td>{{ n.failed_at }}</td>
+        <td>{{ n.resolved_at }}</td>
+        <td>{{ n.last_sent_at }}</td>
+        <td>{{ n.state }}</td>
+        <td>
+          <form method="post" action="{{ url_for('profile_notification_action', notification_id=n.id) }}" class="d-flex flex-wrap gap-1">
+            {% if n.can_acknowledge %}
+              <button class="btn btn-outline-primary btn-sm" type="submit" name="action" value="acknowledge" title="Stop the reminders of this failure">Acknowledge</button>
+            {% endif %}
+            {% if n.is_open %}
+              <select class="form-select form-select-sm w-auto" name="hours" aria-label="Snooze time">
+                {% for hours in snooze_hours %}<option value="{{ hours }}">{{ hours }} h</option>{% endfor %}
+              </select>
+              <button class="btn btn-outline-warning btn-sm" type="submit" name="action" value="snooze" title="Pause the reminders of this failure">Snooze</button>
+            {% endif %}
+            <button class="btn btn-outline-secondary btn-sm" type="submit" name="action" value="clear" title="Remove from this list; no more emails about it">Clear</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="text-muted">No notifications.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+{% endblock %}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+{% block head %}{% endblock %}
+  {#- Installable web app: manifest, theme colour and icons. #}
+  <link rel="manifest" href="{{ url_for('pwa_manifest') }}">
+  <meta name="theme-color" content="{{ pwa_theme_color }}">
+  <meta name="application-name" content="{{ pwa_app_name }}">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="{{ pwa_app_name }}">
+  <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('pwa_icon', size=192) }}">
+  <link rel="apple-touch-icon" href="{{ url_for('pwa_icon', size=180) }}">
+</head>
+<body class="{% block body_class %}container py-4{% endblock %}">
+{% block body %}{% endblock %}
+<div id="pwaOfflineBanner" class="alert alert-warning shadow-sm position-fixed bottom-0 start-50 translate-middle-x mb-3 py-2 px-3 d-none" role="status" style="z-index:2000">You are offline. Data shown may be out of date.</div>
+<button id="pwaInstallButton" type="button" class="btn btn-primary shadow position-fixed bottom-0 end-0 m-3 d-none" style="z-index:2000">Install app</button>
+<script src="{{ url_for('static', filename='js/pwa.js') }}" data-sw-url="{{ url_for('pwa_service_worker') }}" data-scope="{{ url_for('index') }}"></script>
+</body>
+</html>

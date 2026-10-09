@@ -83,8 +83,20 @@ Most keys can also come from environment variables; see the
 ## Repository layout
 
 ```text
-main.py                    application: config, auth store, CSV readers, watchdog, Flask routes and templates
+main.py                    command-line entry point (development server + watchdog)
+sensor_network_pwa/        application package
+  config.py, log.py, runtime.py       configuration, logging, process-wide state
+  access_store/, validation.py        SQLite auth database (one mixin per concern), input validation
+  storage.py, influx.py               collector CSV readers, optional InfluxDB queries
+  intervals.py, charts.py, dashboard.py   time windows, chart settings, public dashboard model
+  anomalies.py, watchdog.py, mailer.py    anomaly evaluation, watchdog loop, email
+  cli.py                              argument parsing and startup
+  web/                                Flask app factory, request hooks, route modules
+  web/templates/                      page templates (extend base.html) and the service worker
+  web/static/                         script and stylesheet of each page
 webapp_wsgi.py             Gunicorn entry point (webapp_wsgi:app)
+pyproject.toml             ruff and mypy configuration
+requirements-dev.txt       development tools (ruff, mypy)
 tests/                     unittest suite (temporary files only, no external services)
 docs/                      configuration, web GUI, deployment and operations guides
 config.json.sample         sample configuration

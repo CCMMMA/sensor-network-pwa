@@ -5,3 +5,6 @@
 !requirements.txt
 !main.py
 !webapp_wsgi.py
+!sensor_network_pwa
+!sensor_network_pwa/**
+**/__pycache__

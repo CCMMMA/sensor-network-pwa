@@ -1,0 +1,13 @@
+.uuid { font-family: var(--bs-font-monospace); font-size: .8rem; }
+.param-list { max-height: 24rem; overflow-y: auto; }
+.param-row { display: flex; align-items: center; gap: .5rem; padding: .2rem .5rem; border-bottom: 1px solid var(--bs-border-color-translucent); }
+.param-row.plotted { background: var(--bs-primary-bg-subtle); }
+.param-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: .875rem; }
+.chart-box { position: relative; height: 24rem; }
+.series-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .25rem 0; }
+.series-row input[type=color] { width: 2.2rem; padding: .1rem; }
+.data-wrap { max-height: 30rem; overflow: auto; }
+#dataTable { font-size: .78rem; white-space: nowrap; }
+#dataTable thead th { position: sticky; top: 0; background: var(--bs-light); z-index: 1; }
+.column-list { max-height: 14rem; overflow-y: auto; columns: 14rem; }
+.stats-table { font-size: .85rem; }

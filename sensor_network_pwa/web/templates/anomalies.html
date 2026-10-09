@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Anomalies log{% endblock %}
+{% block body %}
+  <p><a href="{{ url_for('index') }}">Home</a> | <a href="{{ url_for('profile') }}#notifications">My notifications</a></p>
+  <h1 class="h4">Anomalies log</h1>
+  <p class="text-muted small">Silencing stops the failure and reminder emails of an anomaly for every user. To quiet only your own emails, use your notifications.</p>
+  <table class="table table-sm table-bordered table-striped">
+    <thead>
+      <tr><th>Station</th><th>Type</th><th>Status</th><th>Message</th><th>Updated</th><th>Action</th></tr>
+    </thead>
+    <tbody>
+    {% for a in items %}
+      <tr>
+        <td>{{ a.station_uuid }}</td>
+        <td>{{ a.anomaly_type }}</td>
+        <td>{{ a.status }}</td>
+        <td>{{ a.message }}</td>
+        <td>{{ a.updated_at }}</td>
+        <td>
+          {% if a.status == 'open' %}
+          <form method="post" action="{{ url_for('silence_anomaly') }}" class="d-flex gap-1">
+            <input type="hidden" name="station_uuid" value="{{ a.station_uuid }}">
+            <input type="hidden" name="anomaly_type" value="{{ a.anomaly_type }}">
+            <input class="form-control form-control-sm" style="max-width:110px" type="number" min="1" max="24" name="hours" value="24">
+            <button class="btn btn-warning btn-sm" type="submit">Silence</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

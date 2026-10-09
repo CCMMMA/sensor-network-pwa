@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+{% block title %}Administration{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+{% block body_class %}bg-light{% endblock %}
+{% block body %}
+<div class="container py-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h1 class="h3 mb-0">Administration</h1>
+      <div class="text-muted small">Signed in as <b>{{ admin_user.username }}</b></div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('index') }}">Home</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('profile') }}">Profile</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('anomalies_log') }}">Anomalies log</a>
+      <a class="btn btn-outline-primary btn-sm" href="{{ url_for('admin_dashboard') }}">Network dashboard</a>
+    </div>
+  </div>
+
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+    <div class="alert alert-{{ category }} flash-text" role="alert">{{ message }}</div>
+  {% endfor %}
+
+  <div class="row g-2 mb-3">
+    <div class="col-4"><div class="card shadow-sm"><div class="card-body py-2">
+      <div class="text-muted small">Users</div>
+      <div class="h4 mb-0">{{ users|length }}</div>
+    </div></div></div>
+    <div class="col-4"><div class="card shadow-sm"><div class="card-body py-2">
+      <div class="text-muted small">Stations</div>
+      <div class="h4 mb-0">{{ stations|length }}</div>
+    </div></div></div>
+    <div class="col-4"><div class="card shadow-sm {% if pending_requests %}border-warning{% endif %}"><div class="card-body py-2">
+      <div class="text-muted small">Pending requests</div>
+      <div class="h4 mb-0">{{ pending_requests|length }}</div>
+    </div></div></div>
+  </div>
+
+  <ul class="nav nav-tabs" id="adminTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#users" type="button" role="tab">Users</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#stations" type="button" role="tab">Stations</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#requests" type="button" role="tab">
+        Account requests
+        {% if pending_requests %}<span class="badge text-bg-warning">{{ pending_requests|length }}</span>{% endif %}
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content bg-white border border-top-0 rounded-bottom p-3 shadow-sm">
+
+    {# ------------------------------ Users ------------------------------ #}
+    <div class="tab-pane fade show active" id="users" role="tabpanel">
+      <div class="d-flex flex-wrap gap-2 mb-3">
+        <input id="userSearch" class="form-control" style="max-width: 20rem;" type="search" placeholder="Search by name or email" aria-label="Search users">
+        <button class="btn btn-primary ms-auto" type="button" data-bs-toggle="collapse" data-bs-target="#newUser">New user</button>
+      </div>
+
+      <div class="collapse mb-3" id="newUser">
+        <form method="post" action="{{ url_for('admin_create_user') }}" class="card card-body">
+          <h2 class="h6">New user</h2>
+          <div class="row g-3">
+            <div class="col-md-6 col-lg-3">
+              <label class="form-label" for="newUsername">Username</label>
+              <input class="form-control" id="newUsername" name="username" required autocomplete="off">
+            </div>
+            <div class="col-md-6 col-lg-3">
+              <label class="form-label" for="newEmail">Email <span class="text-muted">(optional)</span></label>
+              <input class="form-control" id="newEmail" name="email" type="email" autocomplete="off">
+              <div class="form-text">Used for the welcome link, alarms and password reset.</div>
+            </div>
+            <div class="col-md-6 col-lg-3">
+              <label class="form-label" for="newPassword">Password</label>
+              <input class="form-control" id="newPassword" name="password" type="password" required minlength="12" autocomplete="new-password">
+              <div class="form-text">At least 12 characters with upper and lower case, a digit and a symbol.</div>
+            </div>
+            <div class="col-md-6 col-lg-3">
+              <label class="form-label" for="newRole">Role</label>
+              <select class="form-select" id="newRole" name="role">
+                <option value="user">User</option>
+                <option value="admin">Administrator</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" id="newForce" name="force_password_change" value="1" checked>
+            <label class="form-check-label" for="newForce">Ask for a new password at the first login</label>
+          </div>
+          <div class="mt-3"><button class="btn btn-primary" type="submit">Create user</button></div>
+        </form>
+      </div>
+
+      <div class="table-responsive">
+      <table class="table align-middle mb-0" id="userTable">
+        <thead><tr><th>User</th><th>Role</th><th>Status</th><th>Station rights</th><th></th></tr></thead>
+        <tbody>
+        {% for u in users %}
+          <tr class="user-row" data-search="{{ (u.username ~ ' ' ~ (u.email or ''))|lower }}">
+            <td>
+              <div class="fw-semibold">{{ u.username }}{% if u.username == admin_user.username %} <span class="text-muted fw-normal">(you)</span>{% endif %}</div>
+              <div class="small text-muted">{{ u.email or 'no email' }}</div>
+            </td>
+            <td>
+              {% if u.role == 'admin' %}<span class="badge text-bg-primary">Administrator</span>
+              {% else %}<span class="badge text-bg-secondary">User</span>{% endif %}
+            </td>
+            <td>
+              {% if u.active %}<span class="badge text-bg-success">Active</span>
+              {% else %}<span class="badge text-bg-danger">Disabled</span>{% endif %}
+              {% if u.force_password_change %}<span class="badge text-bg-warning">Must change password</span>{% endif %}
+            </td>
+            <td class="small">
+              {% if u.role == 'admin' %}All stations
+              {% else %}
+                Data on {{ u.access|length }} restricted · Charts on {{ u.controls|length }}
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#user-{{ loop.index }}">Manage</button>
+            </td>
+          </tr>
+          <tr class="manage-row user-row" data-search="{{ (u.username ~ ' ' ~ (u.email or ''))|lower }}">
+            <td colspan="5" class="p-0 border-0">
+              <div class="collapse" id="user-{{ loop.index }}">
+                <div class="row g-3 p-3">
+                  <div class="col-lg-7">
+                    <h3 class="h6">Station rights</h3>
+                    {% if u.role == 'admin' %}
+                      <p class="text-muted mb-0">Administrators can read, download and configure every station.</p>
+                    {% elif not stations %}
+                      <p class="text-muted mb-0">No stations found in storage.</p>
+                    {% else %}
+                      <form method="post" action="{{ url_for('admin_set_user_permissions') }}">
+                        <input type="hidden" name="username" value="{{ u.username }}">
+                        <table class="table table-sm rights-table bg-white border">
+                          <thead><tr>
+                            <th>Station</th>
+                            <th class="text-center" title="Browse and download the station data">Data access</th>
+                            <th class="text-center" title="Edit the trend-chart axis settings of the public dashboard">Chart settings</th>
+                          </tr></thead>
+                          <tbody>
+                          {% for st in stations %}
+                            <tr>
+                              <td>
+                                <input type="hidden" name="station" value="{{ st.uuid }}">
+                                {{ st.name }}
+                                {% if st.name != st.uuid %}<div class="uuid text-muted">{{ st.uuid }}</div>{% endif %}
+                              </td>
+                              <td class="text-center">
+                                {% if st.policy == 'restricted' %}
+                                  <input class="form-check-input" type="checkbox" name="access" value="{{ st.uuid }}" aria-label="Data access to {{ st.name }}" {% if st.uuid in u.access %}checked{% endif %}>
+                                {% else %}
+                                  {% if st.uuid in u.access %}<input type="hidden" name="access" value="{{ st.uuid }}">{% endif %}
+                                  <span class="badge text-bg-light border" title="The station policy already lets this user in">Yes, by policy</span>
+                                {% endif %}
+                              </td>
+                              <td class="text-center">
+                                <input class="form-check-input" type="checkbox" name="control" value="{{ st.uuid }}" aria-label="Chart settings of {{ st.name }}" {% if st.uuid in u.controls %}checked{% endif %}>
+                              </td>
+                            </tr>
+                          {% endfor %}
+                          </tbody>
+                        </table>
+                        <button class="btn btn-primary btn-sm" type="submit">Save station rights</button>
+                        <span class="form-text ms-2">Data access is chosen here only for stations with the Restricted policy.</span>
+                      </form>
+                    {% endif %}
+                  </div>
+                  <div class="col-lg-5">
+                    <h3 class="h6">Account</h3>
+                    <form method="post" action="{{ url_for('admin_update_user') }}" class="input-group input-group-sm mb-2">
+                      <input type="hidden" name="username" value="{{ u.username }}">
+                      <input type="hidden" name="action" value="email">
+                      <span class="input-group-text">Email</span>
+                      <input class="form-control" type="email" name="email" value="{{ u.email or '' }}" aria-label="Email of {{ u.username }}">
+                      <button class="btn btn-outline-primary" type="submit">Save</button>
+                    </form>
+                    <form method="post" action="{{ url_for('admin_set_password') }}" class="card card-body p-2 mb-2">
+                      <input type="hidden" name="username" value="{{ u.username }}">
+                      <div class="row g-2">
+                        <div class="col-sm-6">
+                          <label class="form-label small" for="password-{{ loop.index }}">New password</label>
+                          <input class="form-control form-control-sm" id="password-{{ loop.index }}" name="password" type="password" required minlength="12" autocomplete="new-password">
+                        </div>
+                        <div class="col-sm-6">
+                          <label class="form-label small" for="password2-{{ loop.index }}">Confirm password</label>
+                          <input class="form-control form-control-sm" id="password2-{{ loop.index }}" name="password2" type="password" required minlength="12" autocomplete="new-password">
+                        </div>
+                      </div>
+                      <div class="form-check mt-2">
+                        <input class="form-check-input" id="force-password-{{ loop.index }}" name="force_password_change" type="checkbox" value="1">
+                        <label class="form-check-label small" for="force-password-{{ loop.index }}">Ask for a new password at the next login</label>
+                      </div>
+                      <div class="mt-2"><button class="btn btn-outline-primary btn-sm" type="submit">Set password</button></div>
+                      <div class="form-text">At least 12 characters with upper and lower case, a digit and a symbol.</div>
+                    </form>
+                    <div class="d-flex flex-wrap gap-2">
+                      <form method="post" action="{{ url_for('admin_force_password') }}">
+                        <input type="hidden" name="username" value="{{ u.username }}">
+                        {% if u.force_password_change %}
+                          <input type="hidden" name="force" value="0">
+                          <button class="btn btn-outline-secondary btn-sm" type="submit">Stop asking for a new password</button>
+                        {% else %}
+                          <button class="btn btn-outline-warning btn-sm" type="submit">Ask for a new password</button>
+                        {% endif %}
+                      </form>
+                      {% if u.username != admin_user.username %}
+                        <form method="post" action="{{ url_for('admin_update_user') }}">
+                          <input type="hidden" name="username" value="{{ u.username }}">
+                          {% if u.role == 'admin' %}
+                            <input type="hidden" name="action" value="make_user">
+                            <button class="btn btn-outline-secondary btn-sm" type="submit">Make regular user</button>
+                          {% else %}
+                            <input type="hidden" name="action" value="make_admin">
+                            <button class="btn btn-outline-secondary btn-sm" type="submit" data-confirm="Give {{ u.username }} full administrator rights?">Make administrator</button>
+                          {% endif %}
+                        </form>
+                        <form method="post" action="{{ url_for('admin_update_user') }}">
+                          <input type="hidden" name="username" value="{{ u.username }}">
+                          {% if u.active %}
+                            <input type="hidden" name="action" value="deactivate">
+                            <button class="btn btn-outline-danger btn-sm" type="submit" data-confirm="Disable {{ u.username }}? They will not be able to log in.">Disable account</button>
+                          {% else %}
+                            <input type="hidden" name="action" value="activate">
+                            <button class="btn btn-outline-success btn-sm" type="submit">Enable account</button>
+                          {% endif %}
+                        </form>
+                      {% endif %}
+                    </div>
+                    <div class="form-text mt-2">Created {{ u.created_at }}</div>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <p id="userSearchEmpty" class="text-muted mt-3 mb-0 d-none">No user matches the search.</p>
+    </div>
+
+    {# ------------------------------ Stations ------------------------------ #}
+    <div class="tab-pane fade" id="stations" role="tabpanel">
+      <div class="alert alert-light border small">
+        <b>Who can browse and download a station's data:</b>
+        <span class="badge text-bg-success">Open</span> everyone, without login ·
+        <span class="badge text-bg-primary">Account</span> every logged-in user ·
+        <span class="badge text-bg-dark">Restricted</span> only the users you select; the station is also hidden from everyone else.
+      </div>
+      {% if not stations %}
+        <p class="text-muted mb-0">No stations found in storage.</p>
+      {% else %}
+      <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead><tr><th>Station</th><th>Last data</th><th>Policy</th><th>Users</th><th></th></tr></thead>
+        <tbody>
+        {% for st in stations %}
+          <tr>
+            <td>
+              <div class="fw-semibold">{{ st.name }}</div>
+              {% if st.name != st.uuid %}<div class="uuid text-muted">{{ st.uuid }}</div>{% endif %}
+            </td>
+            <td class="small">{{ st.last_timestamp or '-' }}</td>
+            <td>
+              <form method="post" action="{{ url_for('admin_set_policy') }}" class="d-flex gap-1">
+                <input type="hidden" name="instrument_uuid" value="{{ st.uuid }}">
+                <select class="form-select form-select-sm policy-select" name="policy" style="min-width: 8.5rem;" aria-label="Policy of {{ st.name }}">
+                  <option value="open" {% if st.policy=='open' %}selected{% endif %}>Open</option>
+                  <option value="account" {% if st.policy=='account' %}selected{% endif %}>Account</option>
+                  <option value="restricted" {% if st.policy=='restricted' %}selected{% endif %}>Restricted</option>
+                </select>
+                <button class="btn btn-outline-primary btn-sm policy-save" type="submit">Save</button>
+              </form>
+            </td>
+            <td class="small">
+              {% if st.policy == 'restricted' %}{{ st.access_count }} with data access{% else %}All by policy{% endif %}
+              · {{ st.control_count }} chart editor{{ '' if st.control_count == 1 else 's' }}
+            </td>
+            <td class="text-end text-nowrap">
+              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('public_station', instrument_uuid=st.uuid) }}">Dashboard</a>
+              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('browse_station', instrument_uuid=st.uuid) }}">Data</a>
+              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('station_chart_settings', instrument_uuid=st.uuid) }}">Chart settings</a>
+              <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#station-{{ loop.index }}">Users</button>
+            </td>
+          </tr>
+          <tr class="manage-row">
+            <td colspan="5" class="p-0 border-0">
+              <div class="collapse" id="station-{{ loop.index }}">
+                <div class="p-3">
+                  <h3 class="h6">Users of {{ st.name }}</h3>
+                  {% if not regular_users %}
+                    <p class="text-muted mb-0">There are no regular users yet. Administrators already have every right.</p>
+                  {% else %}
+                    <form method="post" action="{{ url_for('admin_set_station_permissions') }}" style="max-width: 44rem;">
+                      <input type="hidden" name="station_uuid" value="{{ st.uuid }}">
+                      <table class="table table-sm rights-table bg-white border">
+                        <thead><tr>
+                          <th>User</th>
+                          <th class="text-center">Data access</th>
+                          <th class="text-center">Chart settings</th>
+                        </tr></thead>
+                        <tbody>
+                        {% for u in regular_users %}
+                          <tr>
+                            <td>
+                              <input type="hidden" name="user" value="{{ u.username }}">
+                              {{ u.username }}
+                              {% if not u.active %}<span class="badge text-bg-danger">Disabled</span>{% endif %}
+                              <div class="small text-muted">{{ u.email or 'no email' }}</div>
+                            </td>
+                            <td class="text-center">
+                              {% if st.policy == 'restricted' %}
+                                <input class="form-check-input" type="checkbox" name="access" value="{{ u.username }}" aria-label="Data access for {{ u.username }}" {% if st.uuid in u.access %}checked{% endif %}>
+                              {% else %}
+                                {% if st.uuid in u.access %}<input type="hidden" name="access" value="{{ u.username }}">{% endif %}
+                                <span class="badge text-bg-light border">Yes, by policy</span>
+                              {% endif %}
+                            </td>
+                            <td class="text-center">
+                              <input class="form-check-input" type="checkbox" name="control" value="{{ u.username }}" aria-label="Chart settings for {{ u.username }}" {% if st.uuid in u.controls %}checked{% endif %}>
+                            </td>
+                          </tr>
+                        {% endfor %}
+                        </tbody>
+                      </table>
+                      <button class="btn btn-primary btn-sm" type="submit">Save users</button>
+                      {% if st.policy != 'restricted' %}
+                        <span class="form-text ms-2">Set the policy to Restricted to choose who has data access.</span>
+                      {% endif %}
+                    </form>
+                  {% endif %}
+                </div>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% endif %}
+    </div>
+
+    {# ------------------------------ Requests ------------------------------ #}
+    <div class="tab-pane fade" id="requests" role="tabpanel">
+      {% if not smtp_ready %}
+        <div class="alert alert-warning small">Email is not configured: after approving a request, the onboarding link is shown here for you to pass on.</div>
+      {% endif %}
+      {% if pending_requests %}
+        {% for r in pending_requests %}
+          <div class="card mb-2"><div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <div>
+              <div class="fw-semibold">{{ r.email }}</div>
+              <div class="small">{{ r.message or 'No reason given.' }}</div>
+              <div class="small text-muted">Request #{{ r.id }} · {{ r.created_at }}</div>
+            </div>
+            <div class="d-flex gap-2">
+              <form method="post" action="{{ url_for('admin_approve_request', request_id=r.id) }}">
+                <button class="btn btn-success btn-sm" type="submit">Approve</button>
+              </form>
+              <form method="post" action="{{ url_for('admin_reject_request', request_id=r.id) }}">
+                <button class="btn btn-outline-danger btn-sm" type="submit" data-confirm="Reject the request from {{ r.email }}?">Reject</button>
+              </form>
+            </div>
+          </div></div>
+        {% endfor %}
+      {% else %}
+        <p class="text-muted mb-0">No pending requests.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+{% endblock %}

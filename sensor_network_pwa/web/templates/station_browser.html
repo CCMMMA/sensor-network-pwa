@@ -1,0 +1,299 @@
+{% extends "base.html" %}
+{% block title %}Station {{ station_name }} ({{ instrument_uuid }}){% endblock %}
+{% block head %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/station_browser.css') }}">
+  <style id="hiddenColumnStyle"></style>
+{% endblock %}
+{% block body_class %}bg-light{% endblock %}
+{% block body %}
+<div class="container-fluid py-3" style="max-width: 1500px;">
+
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div class="d-flex align-items-center gap-3">
+      {% if app_logo_url %}<img src="{{ app_logo_url }}" alt="App logo" style="max-height:48px;">{% endif %}
+      <div>
+        <nav class="small"><a href="{{ url_for('index') }}">Home</a> / Station data</nav>
+        <h1 class="h3 mb-0">{{ station_name }}</h1>
+        <div class="uuid text-muted">{{ instrument_uuid }}</div>
+      </div>
+      {% if station_logo_url %}<img src="{{ station_logo_url }}" alt="Station logo" style="max-height:48px;">{% endif %}
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('public_station', instrument_uuid=instrument_uuid) }}">Live dashboard</a>
+      {% if can_control %}
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('station_chart_settings', instrument_uuid=instrument_uuid) }}">Dashboard axis settings</a>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ------------------------------ Time range ------------------------------ #}
+  <div class="card shadow-sm mb-3" id="intervalPanel"><div class="card-body">
+    <div class="d-flex flex-wrap align-items-end gap-3">
+      <form method="get" id="intervalForm">
+        <label class="form-label mb-1" for="intervalSelect">Time window</label>
+        <select class="form-select form-select-sm" name="interval" id="intervalSelect">
+          {% for code, label in interval_options %}
+            <option value="{{ code }}" {% if code==interval %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+          {% if interval == 'custom' %}<option value="custom" selected disabled>custom dates</option>{% endif %}
+        </select>
+      </form>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Move in time">
+        <a class="btn btn-outline-primary" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, **prev_args) }}">&larr; Earlier</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, **next_args) }}">Later &rarr;</a>
+        <a class="btn btn-outline-primary {% if is_latest and interval != 'custom' %}disabled{% endif %}" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, interval=(interval if interval != 'custom' else 'hour')) }}">Latest</a>
+      </div>
+      <form method="get" class="d-flex flex-wrap align-items-end gap-2 ms-lg-auto">
+        <div>
+          <label class="form-label mb-1" for="fromDate">From (UTC)</label>
+          <input class="form-control form-control-sm" type="date" id="fromDate" name="from_date" value="{{ range_args.get('from_date', '') }}" required>
+        </div>
+        <div>
+          <label class="form-label mb-1" for="toDate">To (UTC)</label>
+          <input class="form-control form-control-sm" type="date" id="toDate" name="to_date" value="{{ range_args.get('to_date', '') }}" required>
+        </div>
+        <button class="btn btn-outline-primary btn-sm" type="submit" title="At most {{ max_custom_days }} days">Show these dates</button>
+      </form>
+    </div>
+    <p class="mb-0 mt-3" id="intervalSummary">
+      <b>{{ total_rows }}</b> rows from <b>{{ win_start }}</b> to <b>{{ win_end }}</b> (UTC).
+      {% if chart_step > 1 %}<span class="text-muted">The chart shows one sample every {{ chart_step }}; the table and the statistics use all {{ total_rows }} rows.</span>{% endif %}
+    </p>
+  </div></div>
+
+  <script id="stationBrowseState" type="application/json">{{ station_browse_state_json|safe }}</script>
+
+  {% if not total_rows %}
+    <div class="alert alert-info">No data in this time range. Use <b>Earlier</b>, <b>Later</b> or <b>Latest</b> to move, or pick other dates.</div>
+  {% else %}
+
+  {# ------------------------------ Chart ------------------------------ #}
+  <div class="card shadow-sm mb-3"><div class="card-body">
+    <h2 class="h5">Chart</h2>
+    {% if not numeric_cols %}
+      <p class="text-muted mb-0">No numeric parameters in this time range.</p>
+    {% else %}
+    <div class="row g-3">
+      <div class="col-lg-4 col-xl-3">
+        <label class="form-label mb-1" for="paramSearch">Parameters</label>
+        <input class="form-control form-control-sm mb-2" id="paramSearch" type="search" placeholder="Search {{ numeric_cols|length }} parameters">
+        <div class="param-list border rounded bg-white" id="paramList"></div>
+        <div class="form-text"><b>L</b> / <b>R</b> plot a parameter on the left or right axis; press again to remove it. Parameters with the same unit share an axis.</div>
+      </div>
+      <div class="col-lg-8 col-xl-9">
+        <div class="chart-box"><canvas id="chart"></canvas></div>
+        <div id="chartEmpty" class="text-muted d-none">Choose a parameter with <b>L</b> or <b>R</b> to plot it.</div>
+
+        <div class="mt-3" id="seriesList"></div>
+        <div class="mt-2" id="axisList"></div>
+
+        <div class="d-flex flex-wrap gap-2 mt-3">
+          <button class="btn btn-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#publicationPanel">Download plot&hellip;</button>
+          <a class="btn btn-outline-primary btn-sm" id="plottedCsvLink" href="#">Plotted data (CSV)</a>
+          <button class="btn btn-outline-secondary btn-sm" type="button" id="chartClearBtn">Clear chart</button>
+          <button class="btn btn-outline-secondary btn-sm ms-auto" type="button" id="chartExportBtn">Save chart setup</button>
+          <label class="btn btn-outline-secondary btn-sm mb-0" for="chartImportFile">Load chart setup</label>
+          <input id="chartImportFile" type="file" accept="application/json,.json" hidden>
+        </div>
+
+        <div class="collapse mt-3" id="publicationPanel">
+          <div class="border rounded p-3 bg-white">
+            <h3 class="h6">Publication-quality plot</h3>
+            <div class="row g-2">
+              <div class="col-sm-6 col-xl-3">
+                <label class="form-label mb-1" for="pubSize">Figure size</label>
+                <select class="form-select form-select-sm" id="pubSize">
+                  <option value="90x60">Single column, 90 &times; 60 mm</option>
+                  <option value="140x85">1.5 columns, 140 &times; 85 mm</option>
+                  <option value="190x100" selected>Double column, 190 &times; 100 mm</option>
+                  <option value="254x143">Slide 16:9, 254 &times; 143 mm</option>
+                </select>
+              </div>
+              <div class="col-sm-6 col-xl-2">
+                <label class="form-label mb-1" for="pubFont">Font</label>
+                <select class="form-select form-select-sm" id="pubFont">
+                  <option value="Helvetica, Arial, sans-serif">Sans-serif (Helvetica)</option>
+                  <option value="'Times New Roman', Times, serif">Serif (Times)</option>
+                </select>
+              </div>
+              <div class="col-sm-6 col-xl-2">
+                <label class="form-label mb-1" for="pubFontSize">Text size</label>
+                <select class="form-select form-select-sm" id="pubFontSize">
+                  <option value="7">7 pt</option>
+                  <option value="8" selected>8 pt</option>
+                  <option value="9">9 pt</option>
+                  <option value="10">10 pt</option>
+                  <option value="12">12 pt</option>
+                </select>
+              </div>
+              <div class="col-sm-6 col-xl-2">
+                <label class="form-label mb-1" for="pubDpi">PNG resolution</label>
+                <select class="form-select form-select-sm" id="pubDpi">
+                  <option value="300">300 dpi</option>
+                  <option value="600" selected>600 dpi</option>
+                  <option value="1200">1200 dpi</option>
+                </select>
+              </div>
+              <div class="col-sm-12 col-xl-3">
+                <label class="form-label mb-1" for="pubTitle">Title (optional)</label>
+                <input class="form-control form-control-sm" id="pubTitle" value="{{ station_name }}">
+              </div>
+            </div>
+            <div class="d-flex flex-wrap gap-3 mt-2">
+              <div class="form-check"><input class="form-check-input" type="checkbox" id="pubLegend" checked><label class="form-check-label" for="pubLegend">Legend</label></div>
+              <div class="form-check"><input class="form-check-input" type="checkbox" id="pubGrid" checked><label class="form-check-label" for="pubGrid">Grid</label></div>
+              <div class="form-check"><input class="form-check-input" type="checkbox" id="pubMono"><label class="form-check-label" for="pubMono">Black and white (line styles instead of colours)</label></div>
+            </div>
+            <div class="d-flex flex-wrap gap-2 mt-3">
+              <button class="btn btn-primary btn-sm" type="button" id="pubSvgBtn">Download SVG (vector)</button>
+              <button class="btn btn-primary btn-sm" type="button" id="pubPngBtn">Download PNG</button>
+            </div>
+            <div class="form-text">SVG is a vector file that stays sharp at any size and can be edited or converted to PDF/EPS; PNG is saved at the chosen resolution with its physical size. Times are UTC.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div></div>
+
+  {# ------------------------------ Data ------------------------------ #}
+  <div class="card shadow-sm mb-3" id="data"><div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+      <h2 class="h5 mb-0">Data</h2>
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-primary btn-sm" id="rangeCsvLink" href="{{ url_for('export_station_csv', instrument_uuid=instrument_uuid, **range_args) }}" data-base="{{ url_for('export_station_csv', instrument_uuid=instrument_uuid, **range_args) }}">Download this range (CSV)</a>
+        <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#zipPanel">Raw files (ZIP)&hellip;</button>
+      </div>
+    </div>
+
+    <div class="collapse mb-3" id="zipPanel">
+      <form method="post" action="{{ url_for('download') }}" class="border rounded p-3 bg-white d-flex flex-wrap align-items-end gap-2">
+        <input type="hidden" name="instrument" value="{{ instrument_uuid }}"/>
+        <div>
+          <label class="form-label mb-1" for="zipFrom">From (UTC)</label>
+          <input class="form-control form-control-sm" type="date" id="zipFrom" name="from_date" value="{{ win_start[:10] }}">
+        </div>
+        <div>
+          <label class="form-label mb-1" for="zipTo">To (UTC)</label>
+          <input class="form-control form-control-sm" type="date" id="zipTo" name="to_date" value="{{ win_end[:10] }}">
+        </div>
+        <button class="btn btn-primary btn-sm" type="submit">Download ZIP</button>
+        <div class="form-text w-100">The original hourly CSV files of the station, for any period. Leave both dates empty for the whole archive.</div>
+      </form>
+    </div>
+
+    <div class="d-flex flex-wrap align-items-end gap-3 mb-2">
+      <form method="get" action="{{ url_for('browse_station', instrument_uuid=instrument_uuid) }}#data" id="tablePrefsForm" class="d-flex flex-wrap align-items-end gap-2">
+        {% for key, value in range_args.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+        <div>
+          <label class="form-label mb-1" for="tablePageSize">Rows per page</label>
+          <select class="form-select form-select-sm" id="tablePageSize" name="page_size">
+            {% for size in page_sizes %}<option value="{{ size }}" {% if size|int == page_size %}selected{% endif %}>{{ size }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="form-label mb-1" for="tableOrder">Order</label>
+          <select class="form-select form-select-sm" id="tableOrder" name="order">
+            <option value="asc" {% if order == 'asc' %}selected{% endif %}>Oldest first</option>
+            <option value="desc" {% if order == 'desc' %}selected{% endif %}>Newest first</option>
+          </select>
+        </div>
+        <noscript><button class="btn btn-outline-primary btn-sm" type="submit">Apply</button></noscript>
+      </form>
+      <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#columnPanel">Columns <span class="badge text-bg-secondary" id="columnCount"></span></button>
+      <nav class="ms-auto" aria-label="Table pages">
+        {% set page_args = dict(range_args, page_size=page_size, order=order) %}
+        <ul class="pagination pagination-sm mb-0">
+          <li class="page-item {% if page <= 1 %}disabled{% endif %}"><a class="page-link" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, page=1, **page_args) }}#data">First</a></li>
+          <li class="page-item {% if page <= 1 %}disabled{% endif %}"><a class="page-link" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, page=page-1, **page_args) }}#data">Previous</a></li>
+          <li class="page-item disabled"><span class="page-link">Page {{ page }} of {{ page_count }}</span></li>
+          <li class="page-item {% if page >= page_count %}disabled{% endif %}"><a class="page-link" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, page=page+1, **page_args) }}#data">Next</a></li>
+          <li class="page-item {% if page >= page_count %}disabled{% endif %}"><a class="page-link" href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, page=page_count, **page_args) }}#data">Last</a></li>
+        </ul>
+      </nav>
+    </div>
+
+    <div class="collapse mb-2" id="columnPanel">
+      <div class="border rounded p-2 bg-white">
+        <div class="d-flex gap-2 mb-2">
+          <button class="btn btn-outline-secondary btn-sm" type="button" id="columnsAll">Show all</button>
+          <button class="btn btn-outline-secondary btn-sm" type="button" id="columnsPlotted">Only timestamp and plotted</button>
+          <span class="form-text">The CSV of this range contains the columns shown here.</span>
+        </div>
+        <div class="column-list">
+          {% for c in all_table_columns %}
+            <div class="form-check">
+              <input class="form-check-input column-toggle" type="checkbox" id="col-{{ loop.index0 }}" data-index="{{ loop.index0 }}" value="{{ c }}" checked>
+              <label class="form-check-label small" for="col-{{ loop.index0 }}">{{ c }}</label>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="small text-muted mb-1">Rows {{ start_idx + 1 }}&ndash;{{ end_idx }} of {{ total_rows }}</div>
+    <div class="data-wrap border rounded bg-white" id="tableWrap">
+      <table class="table table-sm table-striped table-hover mb-0" id="dataTable">
+        <thead><tr>
+          {% for c in all_table_columns %}
+            <th class="c{{ loop.index0 }}">{{ c }}{% if c in numeric_cols and units_map.get(c) %} <span class="text-muted fw-normal">[{{ units_map.get(c) }}]</span>{% endif %}</th>
+          {% endfor %}
+        </tr></thead>
+        <tbody>
+          {% for r in table_rows %}
+            <tr>{% for c in all_table_columns %}<td class="c{{ loop.index0 }}">{{ r.get(c) if r.get(c) is not none else '' }}</td>{% endfor %}</tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div></div>
+
+  {# ------------------------------ Statistics ------------------------------ #}
+  <div class="card shadow-sm mb-3" id="statisticsSection"><div class="card-body">
+    <h2 class="h5">Statistics of this range</h2>
+    {% if table_column_stats %}
+      <div class="table-responsive">
+      <table class="table table-sm table-hover stats-table mb-0">
+        <thead><tr><th>Parameter</th><th>Unit</th><th class="text-end">Samples</th><th class="text-end">Minimum</th><th>at</th><th class="text-end">Maximum</th><th>at</th><th class="text-end">Mean</th><th class="text-end">Std. deviation</th></tr></thead>
+        <tbody>
+          {% for stat in table_column_stats %}
+            <tr>
+              <td>{{ stat.column }}</td>
+              <td>{{ units_map.get(stat.column, '') }}</td>
+              <td class="text-end">{{ stat.count }}</td>
+              <td class="text-end">{{ stat.min }}</td><td class="text-muted">{{ stat.min_at or '-' }}</td>
+              <td class="text-end">{{ stat.max }}</td><td class="text-muted">{{ stat.max_at or '-' }}</td>
+              <td class="text-end">{{ stat.avg }}</td>
+              <td class="text-end">{{ stat.stddev }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    {% else %}
+      <p class="text-muted mb-0">No numeric parameters in this time range.</p>
+    {% endif %}
+  </div></div>
+  {% endif %}
+
+  {% if user %}
+  <div class="card shadow-sm mb-3"><div class="card-body">
+    <h2 class="h6">Station logo</h2>
+    <form method="post" action="{{ url_for('upload_station_logo', instrument_uuid=instrument_uuid) }}" enctype="multipart/form-data" class="d-flex flex-wrap gap-2">
+      <input class="form-control form-control-sm w-auto" type="file" name="logo" accept="image/*" required>
+      <button class="btn btn-outline-secondary btn-sm" type="submit">Upload logo</button>
+    </form>
+  </div></div>
+  {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script id="pageConfig" type="application/json">{{ {
+  "stationUuid": instrument_uuid,
+  "defaultColors": default_chart_colors,
+  "winStart": win_start,
+  "winEnd": win_end,
+} | tojson }}</script>
+<script src="{{ url_for('static', filename='js/station_browser.js') }}"></script>
+{% endblock %}

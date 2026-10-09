@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Onboarding link invalid{% endblock %}
+{% block body_class %}container py-5{% endblock %}
+{% block body %}
+  <h1 class="h4">Onboarding link invalid</h1>
+  <p>This onboarding link is invalid, expired, or already used.</p>
+  <p><a href="{{ url_for('index') }}">Home</a></p>
+{% endblock %}

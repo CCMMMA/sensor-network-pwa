@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Public Station View - {{ snapshot.station_name }}{% endblock %}
+{% block head %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/public_station.css') }}">
+{% endblock %}
+{% block body_class %}bg-light{% endblock %}
+{% block body %}
+  <div class="container-fluid py-3 dashboard-root">
+  <div class="d-flex flex-wrap justify-content-between align-items-center mb-3">
+    <div>
+      <div class="mb-2">
+        {% if app_logo_url %}<img src="{{ app_logo_url }}" alt="App logo" style="max-height:44px; margin-right:8px;">{% endif %}
+        {% if station_logo_url %}<img src="{{ station_logo_url }}" alt="Station logo" style="max-height:44px;">{% endif %}
+      </div>
+      <h1 class="h3 mb-1">Public Station Dashboard</h1>
+      <div class="text-muted" id="stationTitle">{{ snapshot.station_name }} ({{ snapshot.instrument_uuid }})</div>
+    </div>
+    <div class="text-end">
+      <div class="mb-2">
+        <label class="small text-muted">Trend window</label>
+        <select id="windowSelect" class="form-select form-select-sm">
+          {% for code, label in window_options %}
+            <option value="{{ code }}" {% if code == selected_window %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="small text-muted">Last update</div>
+      <div class="fw-semibold" id="lastUpdate">{{ snapshot.last_timestamp or "-" }}</div>
+      {% if can_control %}
+        <a class="btn btn-sm btn-outline-secondary mt-2" href="{{ url_for('station_chart_settings', instrument_uuid=snapshot.instrument_uuid) }}">Trend chart axis settings</a>
+      {% endif %}
+      {% if can_browse_download %}
+        <a class="btn btn-sm btn-primary mt-2" href="{{ url_for('browse_station', instrument_uuid=snapshot.instrument_uuid) }}">Browse & Download Data</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div id="cards" class="row g-1 mb-1"></div>
+  <div id="aqiStatus" class="row g-1 mb-1"></div>
+  <div id="chartsWrap">
+    <div id="charts" class="row g-1"></div>
+  </div>
+
+  <script id="pageConfig" type="application/json">{{ {
+    "snapshotUrl": url_for('public_station_snapshot', instrument_uuid=snapshot.instrument_uuid),
+    "selectedWindow": selected_window,
+    "selectedFocus": selected_focus,
+    "appLogoUrl": app_logo_url,
+    "stationLogoUrl": station_logo_url,
+    "windowOptions": window_options,
+    "snapshot": snapshot,
+  } | tojson }}</script>
+  <script src="{{ url_for('static', filename='js/public_station.js') }}"></script>
+  </div>
+{% endblock %}

@@ -18,9 +18,15 @@ at a directory holding collector CSV files:
 ## Automated checks
 
 ```bash
-python -m compileall -q main.py webapp_wsgi.py tests
+python -m pip install -r requirements-dev.txt
+ruff check .
+ruff format --check .
+mypy
+python -m compileall -q main.py webapp_wsgi.py sensor_network_pwa tests
 python -m unittest discover -s tests -v
 ```
+
+`pyproject.toml` configures ruff (lint rules, 120-column formatting) and mypy.
 
 `tests/test_web_and_auth.py` uses temporary files only; no collector, broker, InfluxDB,
 or SMTP server is needed. It covers configuration loading without collector settings,
@@ -33,7 +39,8 @@ header, map popup escaping, session-secret fallback, the onboarding-only usernam
 check, email validation of account requests, hiding of restricted stations, selection
 of hourly files, the unchanged-poll shortcut, response compression, chart thinning,
 dashboard cards for interleaved device rows, the administration page actions, station page ranges, paging and CSV export, and the
-progressive web app assets (doctype, manifest, icons, service worker).
+progressive web app assets (doctype, manifest, icons, service worker), and the static scripts and
+stylesheets of the pages (served, compressed, free of inline code and template syntax).
 
 ## Container checks
 
@@ -44,4 +51,5 @@ docker run --rm --volume "$PWD/tests:/tests:ro" sensor-network-pwa:check \
   python -m unittest discover -s /tests -v
 ```
 
-If adding a runtime file, update both `.dockerignore` and the `Dockerfile` copy list.
+Modules, templates and static files inside `sensor_network_pwa/` are copied into the image with the package.
+If adding a runtime file outside it, update both `.dockerignore` and the `Dockerfile` copy list.

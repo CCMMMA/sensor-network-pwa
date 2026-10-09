@@ -9,7 +9,8 @@
 - [Migration](migration.md): replacing the web GUI that used to be part of `sensor-network-collector`.
 - [CI/CD](ci-cd.md): checks and GHCR images.
 
-`main.py` holds the application; `webapp_wsgi.py` exposes it to Gunicorn. The data
+The `sensor_network_pwa` package holds the application; `main.py` starts it for development
+and `webapp_wsgi.py` exposes it to Gunicorn. The data
 shown comes from the CSV storage written by
 [`sensor-network-collector`](https://github.com/CCMMMA/sensor-network-collector), whose
 documentation describes the file layout, units, MQTT ingest, and Signal K forwarding.

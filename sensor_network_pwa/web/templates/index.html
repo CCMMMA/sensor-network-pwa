@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Sensor Network Collector - Data Portal{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}">
+{% endblock %}
+{% block body %}
+  {% if app_logo_url %}
+    {% if web_app_link %}<a href="{{ web_app_link }}" target="_blank" rel="noopener noreferrer">{% endif %}
+    <img src="{{ app_logo_url }}" alt="App logo" style="max-height:56px; margin-bottom:8px;">
+    {% if web_app_link %}</a>{% endif %}
+  {% endif %}
+  <h1>Sensor Network Collector - Data Portal</h1>
+  {% if user %}
+    <p>Logged in as <b>{{ user.username }}</b> ({{ user.role }}) - <a href="{{ url_for('logout') }}">Logout</a></p>
+    <p><a href="{{ url_for('profile') }}">Profile and notifications</a> | <a href="{{ url_for('anomalies_log') }}">Anomalies log</a></p>
+    {% if user.role == 'admin' %}<p><a href="{{ url_for('admin') }}">Admin panel</a></p>{% endif %}
+  {% else %}
+    <p>{% if web_info_link %}<a href="{{ web_info_link }}" target="_blank" rel="noopener noreferrer">Info</a> | {% endif %}<a href="{{ url_for('login') }}">Login</a> | <a href="{{ url_for('request_account') }}">Request account</a></p>
+  {% endif %}
+
+  <div class="panel">
+    <h2>Stations map</h2>
+    {% if not storage_root %}
+      <p>Storage is not enabled/configured.</p>
+    {% elif not stations %}
+      <p>No stations found in the configured storage.</p>
+    {% else %}
+      <div id="map"></div>
+      <p>Click a marker for the station details and its dashboard. Green markers: data browsing and download allowed. Gray markers: dashboard only with the current permissions.</p>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Browse & download</h2>
+    {% if not clickable %}
+      <p>No stations available with your current permissions.</p>
+    {% else %}
+      <form method="post" action="{{ url_for('download') }}">
+        {% for st in clickable %}
+          <label>
+            <input type="checkbox" name="instrument" value="{{ st.uuid }}"> {{ st.name }} ({{ st.uuid }})
+            (policy={{ st.policy }})
+            <a href="{{ url_for('browse_station', instrument_uuid=st.uuid) }}">browse</a>
+            | <a href="{{ url_for('public_station', instrument_uuid=st.uuid) }}">public view</a>
+          </label><br/>
+        {% endfor %}
+        <p>Date filter (optional):</p>
+        <label>From <input class="form-control d-inline-block w-auto" type="date" name="from_date"></label>
+        <label>To <input class="form-control d-inline-block w-auto" type="date" name="to_date"></label>
+        <p><button class="btn btn-primary mt-2" type="submit">Download ZIP</button></p>
+      </form>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Public station dashboards</h2>
+    {% if not stations %}
+      <p>No stations found in the configured storage.</p>
+    {% else %}
+      <ul>
+        {% for st in stations %}
+          <li><a href="{{ url_for('public_station', instrument_uuid=st.uuid) }}">{{ st.name }} ({{ st.uuid }})</a></li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script id="pageConfig" type="application/json">{{ {
+    "stations": stations,
+    "center": center,
+  } | tojson }}</script>
+  <script src="{{ url_for('static', filename='js/index.js') }}"></script>
+{% endblock %}

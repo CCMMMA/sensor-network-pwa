@@ -4,6 +4,7 @@
 manual dispatch.
 
 - Python 3.10–3.14: install `requirements.txt`, `pip check`, compile, run the unittest suite.
+  The Python 3.12 job also runs `ruff check`, `ruff format --check` and `mypy`.
 - After those pass: build the Docker image, check `python main.py --help`, and run the
   tests inside the image.
 - Only a successful push to `main` publishes:

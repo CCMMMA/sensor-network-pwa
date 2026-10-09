@@ -1,0 +1,4 @@
+.uuid { font-family: var(--bs-font-monospace); font-size: .8rem; }
+.manage-row > td { background: var(--bs-light); }
+.rights-table td, .rights-table th { vertical-align: middle; }
+.flash-text { overflow-wrap: anywhere; }
