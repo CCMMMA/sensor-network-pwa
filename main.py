@@ -1,6 +1,7 @@
 import argparse
 import csv
 import functools
+import gzip
 import hashlib
 import json
 import logging
@@ -1251,11 +1252,20 @@ def find_latest_csv_file(storage_root: str, instrument_uuid: str):
 
 
 def iter_csv_rows(csv_path: Path):
+    # csv.reader with zip() is about twice as fast as csv.DictReader on the hourly files.
     with csv_path.open("r", newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            # A row longer than the header puts its surplus values under the None key.
-            row.pop(None, None)
-            yield row
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if not header:
+            return
+        width = len(header)
+        for values in reader:
+            if not values:
+                continue
+            if len(values) < width:
+                values = values + [None] * (width - len(values))
+            # zip() drops the surplus values of a row longer than the header.
+            yield dict(zip(header, values))
 
 
 def read_latest_station_row(csv_path: Path):
@@ -1288,21 +1298,83 @@ def extract_date_from_name(name: str):
         return None
 
 
-def list_csv_files_for_instrument(storage_root: str, instrument_uuid: str, from_date=None, to_date=None):
-    root = Path(storage_root) / instrument_uuid
-    if not root.exists():
-        return []
+_CSV_FILE_HOUR_RE = re.compile(r"_(\d{4})(\d{2})(\d{2})Z(\d{2})\d{2}\.csv$")
 
-    files = []
-    for path in root.rglob("*.csv"):
-        date = extract_date_from_name(path.name)
-        if from_date and (date is None or date < from_date):
-            continue
-        if to_date and (date is None or date > to_date):
-            continue
-        files.append(path)
-    files.sort()
-    return files
+
+def _csv_file_hour(name: str):
+    """Start of the hour covered by UUID_YYYYMMDDZHH00.csv, or None."""
+    m = _CSV_FILE_HOUR_RE.search(name)
+    if not m:
+        return None
+    try:
+        year, month, day, hour = (int(g) for g in m.groups())
+        return datetime(year, month, day, hour, tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _as_utc_bound(value, end_of_day: bool):
+    """Accept a date or a datetime as a time bound."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    moment = datetime.max.time() if end_of_day else datetime.min.time()
+    return datetime.combine(value, moment, tzinfo=timezone.utc)
+
+
+def iter_csv_files_newest_first(storage_root: str, instrument_uuid: str, from_date=None, to_date=None):
+    """Yield the station's hourly files, newest first.
+
+    Year, month and day directories outside the requested period are not opened, so
+    the cost depends on the period and not on the length of the station's history.
+    """
+    root = Path(storage_root) / instrument_uuid
+    start = _as_utc_bound(from_date, end_of_day=False)
+    end = _as_utc_bound(to_date, end_of_day=True)
+    start_key = (start.year, start.month, start.day) if start else None
+    end_key = (end.year, end.month, end.day) if end else None
+
+    def walk(directory: Path, date_key: tuple):
+        try:
+            entries = sorted(directory.iterdir(), key=lambda p: p.name, reverse=True)
+        except OSError:
+            return
+        files = []
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                key = date_key
+                # <station>/YYYY/MM/DD: compare as much of the date as the path gives.
+                if key is not None and len(key) < 3 and entry.name.isdigit():
+                    key = key + (int(entry.name),)
+                    if start_key and key < start_key[: len(key)]:
+                        continue
+                    if end_key and key > end_key[: len(key)]:
+                        continue
+                else:
+                    key = None
+                yield from walk(entry, key)
+            elif entry.suffix.lower() == ".csv":
+                if start or end:
+                    hour = _csv_file_hour(entry.name)
+                    if hour is None:
+                        continue
+                    if start and hour + timedelta(hours=1) <= start:
+                        continue
+                    if end and hour > end:
+                        continue
+                files.append(entry)
+        # Files next to date directories do not follow the layout: treat them as oldest.
+        yield from files
+
+    if root.is_dir():
+        yield from walk(root, ())
+
+
+def list_csv_files_for_instrument(storage_root: str, instrument_uuid: str, from_date=None, to_date=None):
+    return sorted(iter_csv_files_newest_first(storage_root, instrument_uuid, from_date=from_date, to_date=to_date))
 
 
 def make_zip_for_download(storage_root: str, instrument_uuids, from_date=None, to_date=None):
@@ -1671,12 +1743,12 @@ def get_station_preview(storage_root: str, instrument_uuid: str):
 
 
 def load_station_rows(storage_root: str, instrument_uuid: str, from_date=None, to_date=None, limit=400):
-    files = list_csv_files_for_instrument(storage_root, instrument_uuid, from_date=from_date, to_date=to_date)
+    """Rows in time order. from_date/to_date are dates or datetimes selecting the hourly files."""
     limited = limit is not None and limit > 0
     chunks = []
     total = 0
-    # Newest files first, so a limited read does not parse the whole history.
-    for csv_path in reversed(files):
+    # Newest files first, so a limited read neither lists nor parses the whole history.
+    for csv_path in iter_csv_files_newest_first(storage_root, instrument_uuid, from_date=from_date, to_date=to_date):
         try:
             chunk = list(iter_csv_rows(csv_path))
         except Exception:
@@ -1703,6 +1775,8 @@ def extract_numeric_series(rows, excluded=None):
                 numeric_keys.add(k)
     return sorted(numeric_keys)
 
+
+STATION_BROWSER_MAX_CHART_POINTS = 3000
 
 DEFAULT_CHART_COLORS = [
     "#0b57d0",
@@ -2299,14 +2373,19 @@ def _influx_range_start_for_window(window: str):
     return "-14d"
 
 
-def _query_influx_station_rows(cfg: dict, instrument_uuid: str, window: str):
+def _query_influx_station_rows(cfg: dict, instrument_uuid: str, window: str, start: datetime = None):
     if not cfg or not cfg.get("enable_influx"):
         return []
     influx_client = runtime.get("influx_client")
     if influx_client is None:
         return []
 
-    range_start = _influx_range_start_for_window(window)
+    # Query from the start of the displayed window when it is known; the relative
+    # ranges are much wider, to cover stations whose latest data is old.
+    if start is not None:
+        range_start = start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    else:
+        range_start = _influx_range_start_for_window(window)
     query = f"""
 from(bucket: {json.dumps(cfg["influxdb_bucket"])})
   |> range(start: {range_start})
@@ -2414,16 +2493,20 @@ def build_public_station_snapshot(
     cfg = cfg or runtime.get("config") or {}
     access_store = access_store or runtime.get("access_store")
     preview = get_station_preview(storage_root, instrument_uuid)
-    latest_hint = parse_iso_ts(preview.get("last_timestamp") or "") or utc_now()
+    preview_ts = parse_iso_ts(preview.get("last_timestamp") or "")
+    latest_hint = preview_ts or utc_now()
     storage_window_start = interval_start(latest_hint, window)
+    # Only the hourly files overlapping the window are read.
     storage_rows = load_station_rows(
         storage_root,
         instrument_uuid,
-        from_date=storage_window_start.date(),
-        to_date=latest_hint.date(),
+        from_date=storage_window_start,
+        to_date=latest_hint,
         limit=None,
     )
-    influx_rows = _query_influx_station_rows(cfg, instrument_uuid, window)
+    influx_rows = _query_influx_station_rows(
+        cfg, instrument_uuid, window, start=storage_window_start if preview_ts else None
+    )
     rows = _merge_station_rows(influx_rows, storage_rows)
 
     if not rows:
@@ -2874,6 +2957,10 @@ def _run_watchdog_scan(cfg: dict, access_store: AccessStore, storage_root: str):
 # ----------------------------
 # Progressive web app assets
 # ----------------------------
+COMPRESSIBLE_MIMETYPES = frozenset(
+    {"text/html", "application/json", "text/javascript", "application/manifest+json"}
+)
+
 PWA_THEME_COLOR = "#0b57d0"
 PWA_ICON_SIZES = (180, 192, 512)
 
@@ -3038,6 +3125,25 @@ def create_web_app(cfg: dict, access_store: AccessStore):
     def add_security_headers(response):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "same-origin")
+        return response
+
+    @app.after_request
+    def compress_response(response):
+        # after_request hooks run in reverse order: this one sees the final body.
+        if (
+            response.direct_passthrough
+            or response.status_code != 200
+            or response.headers.get("Content-Encoding")
+            or response.mimetype not in COMPRESSIBLE_MIMETYPES
+            or "gzip" not in request.headers.get("Accept-Encoding", "").lower()
+        ):
+            return response
+        data = response.get_data()
+        if len(data) < 1024:
+            return response
+        response.set_data(gzip.compress(data, compresslevel=5))
+        response.headers["Content-Encoding"] = "gzip"
+        response.vary.add("Accept-Encoding")
         return response
 
     @app.after_request
@@ -3312,7 +3418,7 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                   <p>No stations found in the configured storage.</p>
                 {% else %}
                   <div id="map"></div>
-                  <p>Green markers are clickable (browse/download allowed). Gray markers are visible but not accessible with current permissions.</p>
+                  <p>Click a marker for the station details and its dashboard. Green markers: data browsing and download allowed. Gray markers: dashboard only with the current permissions.</p>
                 {% endif %}
               </div>
 
@@ -3354,57 +3460,80 @@ def create_web_app(cfg: dict, access_store: AccessStore):
               <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
               <script>
                 const stations = {{ stations | tojson }};
-                if (stations.length > 0 && document.getElementById('map')) {
-                  const map = L.map('map').setView([{{ center.lat }}, {{ center.lon }}], {{ center.zoom }});
+                const mapEl = document.getElementById('map');
+                if (stations.length > 0 && mapEl && window.L) {
+                  const map = L.map(mapEl).setView([{{ center.lat }}, {{ center.lon }}], {{ center.zoom }});
                   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19,
-                    attribution: '&copy; OpenStreetMap contributors'
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                   }).addTo(map);
+                  L.control.scale({ imperial: false }).addTo(map);
 
+                  const positions = [];
                   stations.forEach((s) => {
-                    if (s.latitude == null || s.longitude == null) {
+                    const lat = Number(s.latitude);
+                    const lon = Number(s.longitude);
+                    if (s.latitude == null || s.longitude == null || !Number.isFinite(lat) || !Number.isFinite(lon)
+                        || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
                       return;
                     }
+                    positions.push([lat, lon]);
                     const color = s.can_access ? '#1f9d55' : '#666';
-                    const marker = L.circleMarker([s.latitude, s.longitude], {
-                      radius: 8,
-                      color: color,
+                    const marker = L.circleMarker([lat, lon], {
+                      radius: 9,
+                      color: '#fff',
+                      weight: 2,
                       fillColor: color,
-                      fillOpacity: 0.85
+                      fillOpacity: 0.9
                     }).addTo(map);
 
                     // Station names and timestamps come from sensor data: add them as text, never as HTML.
                     const popup = document.createElement('div');
-                    const addLine = (text) => {
-                      popup.appendChild(document.createElement('br'));
-                      popup.appendChild(document.createTextNode(text));
-                    };
-                    const addLink = (href, text) => {
-                      const a = document.createElement('a');
-                      a.href = href;
-                      a.textContent = text;
-                      popup.appendChild(document.createElement('br'));
-                      popup.appendChild(a);
-                    };
-                    const title = document.createElement('b');
+                    const title = document.createElement('div');
+                    title.className = 'fw-bold';
                     title.textContent = s.name || s.uuid;
                     popup.appendChild(title);
-                    addLine(`uuid=${s.uuid}`);
-                    addLine(`policy=${s.policy}`);
+                    const addLine = (text) => {
+                      const line = document.createElement('div');
+                      line.className = 'small text-muted';
+                      line.textContent = text;
+                      popup.appendChild(line);
+                    };
+                    addLine(s.uuid);
+                    addLine(`policy: ${s.policy}`);
                     if (s.last_timestamp) {
-                      addLine(`last=${s.last_timestamp}`);
+                      addLine(`last data: ${s.last_timestamp}`);
                     }
+                    const actions = document.createElement('div');
+                    actions.className = 'd-grid gap-1 mt-2';
+                    const addButton = (href, text, style) => {
+                      const a = document.createElement('a');
+                      a.href = href;
+                      a.className = `btn btn-sm ${style}`;
+                      a.style.color = style === 'btn-primary' ? '#fff' : '';
+                      a.textContent = text;
+                      actions.appendChild(a);
+                    };
+                    addButton(s.public_url, 'Open dashboard', 'btn-primary');
                     if (s.can_access) {
-                      addLink(s.browse_url, 'browse station');
+                      addButton(s.browse_url, 'Browse & download data', 'btn-outline-secondary');
                     } else {
-                      addLine('no access with current user');
+                      addLine('Log in to browse and download data.');
                     }
-                    addLink(s.public_url, 'public dashboard');
-                    marker.bindPopup(popup);
-                    marker.on('click', () => {
-                      window.location.href = s.public_url;
-                    });
+                    popup.appendChild(actions);
+                    marker.bindPopup(popup, { minWidth: 180 });
+                    marker.bindTooltip(document.createTextNode(s.name || s.uuid), { direction: 'top', offset: [0, -8] });
                   });
+
+                  // Show every station, whatever the first one is.
+                  if (positions.length > 1) {
+                    map.fitBounds(positions, { padding: [30, 30], maxZoom: 12 });
+                  } else if (positions.length === 1) {
+                    map.setView(positions[0], 11);
+                  }
+                  // The container can change size after the first layout (fonts, installed-app window).
+                  window.addEventListener('resize', () => map.invalidateSize());
+                  setTimeout(() => map.invalidateSize(), 0);
                 }
               </script>
             </body>
@@ -3458,7 +3587,7 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                 except OverflowError:
                     abort(400, "anchor is out of range")
                 windowed = load_station_rows(
-                    storage_root, instrument_uuid, from_date=hint_start.date(), to_date=hint_end.date(), limit=None
+                    storage_root, instrument_uuid, from_date=hint_start, to_date=hint_end, limit=None
                 )
                 for row in windowed:
                     ts = parse_iso_ts(row.get("timestamp", ""))
@@ -3548,12 +3677,18 @@ def create_web_app(cfg: dict, access_store: AccessStore):
         chart_config = parse_station_browser_chart_config(chart_config_args, numeric_cols)
         chart_config_json = serialize_station_browser_chart_config(chart_config)
         resolved_chart_specs = resolve_station_chart_specs(access_store, instrument_uuid)
-        chart_labels, chart_datasets, chart_y_axes = build_station_browser_chart_model(rows, chart_config, units_map, resolved_chart_specs)
+        # Long windows hold tens of thousands of samples: the chart gets an evenly
+        # thinned series, while the table and the statistics keep every row.
+        chart_step = max(1, math.ceil(len(rows) / STATION_BROWSER_MAX_CHART_POINTS))
+        chart_rows = rows[::chart_step]
+        if chart_step > 1 and chart_rows[-1] is not rows[-1]:
+            chart_rows.append(rows[-1])
+        chart_labels, chart_datasets, chart_y_axes = build_station_browser_chart_model(chart_rows, chart_config, units_map, resolved_chart_specs)
         selected_fields = [item["field"] for side in ("left", "right") for item in chart_config.get(side, [])]
         numeric_series_values = {}
         numeric_series_aligned = {}
         for field in numeric_cols:
-            aligned_values = [_to_float(row.get(field)) for row in rows]
+            aligned_values = [_to_float(row.get(field)) for row in chart_rows]
             numeric_series_aligned[field] = aligned_values
             numeric_series_values[field] = [value for value in aligned_values if value is not None]
         chart_axis_defaults = build_station_browser_axis_defaults(numeric_series_values, resolved_chart_specs)
@@ -3651,6 +3786,7 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                   <a href="{{ url_for('browse_station', instrument_uuid=instrument_uuid, interval=interval, anchor=next_anchor, browser_prefs=browser_prefs_json, from_date=request.args.get('from_date',''), to_date=request.args.get('to_date','')) }}">next {{ interval_label }} &#8594;</a>
                 </p>
                 <p id="intervalSummary">Showing data in window: {{ win_start }} to {{ win_end }} UTC</p>
+                {% if chart_step > 1 %}<p class="small text-muted">The chart shows one sample every {{ chart_step }}; the table and the statistics use all {{ total_rows }} rows.</p>{% endif %}
               </div>
 
               <div class="panel">
@@ -3823,20 +3959,20 @@ def create_web_app(cfg: dict, access_store: AccessStore):
               </div>
 
               <script>
-                let labels = {{ chart_labels | tojson }};
-                let datasets = {{ chart_datasets | tojson }};
-                let yAxes = {{ chart_y_axes | tojson }};
+                // The series are embedded once, in the stationBrowseState JSON block above.
+                let labels = [];
+                let datasets = [];
+                let yAxes = {};
                 const chartConfigState = {{ chart_config | tojson }};
                 const tablePrefsState = {{ table_prefs | tojson }};
-                let unitsMap = {{ units_map | tojson }};
-                let allNumericCols = {{ numeric_cols | tojson }};
-                let allTableColumns = {{ all_table_columns | tojson }};
+                let unitsMap = {};
+                let allNumericCols = [];
+                let allTableColumns = [];
                 const chartConfigCookieName = {{ chart_cookie_name | tojson }};
                 const browserPrefsCookieName = {{ browser_prefs_cookie_name | tojson }};
                 const defaultChartColors = {{ default_chart_colors | tojson }};
-                let numericSeriesValues = {{ numeric_series_values | tojson }};
-                let numericSeriesAligned = {{ numeric_series_aligned | tojson }};
-                let chartAxisDefaults = {{ chart_axis_defaults | tojson }};
+                let numericSeriesAligned = {};
+                let chartAxisDefaults = {};
                 const browserPrefsStorageKey = `station_browser_prefs:${{ instrument_uuid | tojson }}`;
                 const chartConfigStorageKey = `station_chart_config:${{ instrument_uuid | tojson }}`;
                 const hasBrowserPrefsQuery = {{ (True if request.args.get('browser_prefs') or request.args.get('chart_config') else False) | tojson }};
@@ -3899,10 +4035,10 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                   unitsMap = state.units_map && typeof state.units_map === 'object' ? state.units_map : {};
                   allNumericCols = Array.isArray(state.numeric_cols) ? state.numeric_cols : [];
                   allTableColumns = Array.isArray(state.all_table_columns) ? state.all_table_columns : [];
-                  numericSeriesValues = state.numeric_series_values && typeof state.numeric_series_values === 'object' ? state.numeric_series_values : {};
                   numericSeriesAligned = state.numeric_series_aligned && typeof state.numeric_series_aligned === 'object' ? state.numeric_series_aligned : {};
                   chartAxisDefaults = state.chart_axis_defaults && typeof state.chart_axis_defaults === 'object' ? state.chart_axis_defaults : {};
                 }
+                applyServerState(parseStationBrowseStateFromDocument(document));
 
                 function buildStationChartModel() {
                   const builtDatasets = [];
@@ -4137,10 +4273,11 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                     const index = Number(target.dataset.index);
                     if (!side || !Number.isInteger(index) || !chartConfigState[side] || !chartConfigState[side][index]) return;
                     const item = chartConfigState[side][index];
-                    const values = (numericSeriesValues[item.field] || []).map(Number).filter((v) => Number.isFinite(v));
+                    const values = (numericSeriesAligned[item.field] || []).filter((v) => v !== null && Number.isFinite(Number(v))).map(Number);
                     if (!values.length) return;
-                    let lo = Math.min(...values);
-                    let hi = Math.max(...values);
+                    // reduce(): Math.min(...values) overflows the call stack on long windows.
+                    let lo = values.reduce((a, b) => Math.min(a, b));
+                    let hi = values.reduce((a, b) => Math.max(a, b));
                     if (lo === hi) {
                       const pad = Math.max(1.0, Math.abs(lo) * 0.15);
                       lo -= pad;
@@ -4359,6 +4496,7 @@ def create_web_app(cfg: dict, access_store: AccessStore):
             interval=interval,
             interval_options=TREND_INTERVALS,
             interval_label=interval_label,
+            chart_step=chart_step,
             win_start=win_start.isoformat().replace("+00:00", "Z"),
             win_end=win_end.isoformat().replace("+00:00", "Z"),
             prev_anchor=prev_anchor,
@@ -4373,13 +4511,7 @@ def create_web_app(cfg: dict, access_store: AccessStore):
             table_prefs=table_prefs,
             page_size_pref=page_size_pref,
             selected_fields=selected_fields,
-            chart_labels=chart_labels,
-            chart_datasets=chart_datasets,
-            chart_y_axes=chart_y_axes,
-            chart_axis_defaults=chart_axis_defaults,
             default_chart_colors=DEFAULT_CHART_COLORS,
-            numeric_series_values=numeric_series_values,
-            numeric_series_aligned=numeric_series_aligned,
             table_rows=table_rows,
             table_cols=table_cols,
             all_table_columns=all_table_columns,
@@ -4402,7 +4534,6 @@ def create_web_app(cfg: dict, access_store: AccessStore):
                     "numeric_cols": numeric_cols,
                     "all_table_columns": all_table_columns,
                     "units_map": units_map,
-                    "numeric_series_values": numeric_series_values,
                     "numeric_series_aligned": numeric_series_aligned,
                     "chart_axis_defaults": chart_axis_defaults,
                 }
@@ -5073,6 +5204,15 @@ def create_web_app(cfg: dict, access_store: AccessStore):
             abort(404, "Station not found")
 
         window = normalize_public_window(request.args.get("window", "hour"))
+        since = request.args.get("since", "")
+        force = parse_boolish(request.args.get("force", "0"), False)
+        since_dt = parse_iso_ts(since)
+        if since_dt is not None and not force:
+            # Most polls arrive before the station has sent new data: answer those
+            # from the latest stored row instead of rebuilding the whole snapshot.
+            latest = get_station_preview(storage_root, instrument_uuid).get("last_timestamp")
+            if parse_iso_ts(latest or "") == since_dt:
+                return jsonify({"changed": False})
         snapshot = build_public_station_snapshot(
             storage_root,
             instrument_uuid,
@@ -5080,8 +5220,6 @@ def create_web_app(cfg: dict, access_store: AccessStore):
             cfg=cfg,
             access_store=access_store,
         )
-        since = request.args.get("since", "")
-        force = parse_boolish(request.args.get("force", "0"), False)
         changed = bool(snapshot.get("last_timestamp")) and snapshot.get("last_timestamp") != since
         if force:
             changed = True

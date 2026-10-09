@@ -37,6 +37,8 @@
 - Update `README.md`, `docs/*.md`, and sample configuration files in the same work item whenever behavior, configuration, routes, UI/UX, deployment, or storage semantics change.
 - The CSV layout is owned by `sensor-network-collector` (`docs/storage.md` there); change the readers here only together with that project.
 - Read CSV files only through `iter_csv_rows`/`load_station_rows`, so malformed rows are handled in one place.
+- Find CSV files through `iter_csv_files_newest_first` with time bounds; never scan a station's whole history (`rglob`) on a request path.
+- Routes polled by pages (`/api/public/station/<uuid>/snapshot`, `/api/admin/dashboard`) must stay cheap: check their timing against a large storage tree when changing them.
 
 ## Security Conventions
 - Station names, field names, and values originate from sensor payloads: treat them as untrusted. In templates rely on Jinja autoescaping or `tojson`; in JavaScript use `textContent`/DOM nodes or `escapeHtml`, never string-built HTML.

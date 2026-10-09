@@ -1,5 +1,6 @@
 import csv
 import glob
+import gzip
 import io
 import json
 import os
@@ -297,6 +298,76 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertEqual(worker.mimetype, "text/javascript")
         self.assertEqual(worker.headers["Cache-Control"], "no-cache")
         self.assertIn('"/offline"', worker.get_data(as_text=True))
+
+    def test_file_selection_follows_requested_hours(self):
+        root = self.cfg["storage_root"]
+        base = datetime(2024, 12, 31, 22, 30, tzinfo=timezone.utc)
+        for hours in range(5):  # 22:30 on 31 December to 02:30 on 1 January
+            dt = base + timedelta(hours=hours)
+            self.write_row("hourly", dt, {"timestamp": dt.isoformat(), "TempOut": hours})
+        stray = Path(root, "hourly", "notes.csv")
+        stray.write_text("timestamp,TempOut\nx,1\n")
+
+        def hours(**bounds):
+            return [row["TempOut"] for row in main.load_station_rows(root, "hourly", limit=None, **bounds)]
+
+        newest_first = [p.name for p in main.iter_csv_files_newest_first(root, "hourly")]
+        self.assertEqual(newest_first[0], "hourly_20250101Z0200.csv")
+        self.assertEqual(len(newest_first), 6)
+        self.assertEqual(hours(from_date=base + timedelta(hours=1), to_date=base + timedelta(hours=3)), ["1", "2", "3"])
+        self.assertEqual(hours(from_date=base.date(), to_date=base.date()), ["0", "1"])
+        self.assertEqual(hours(from_date=datetime(2025, 1, 1).date()), ["2", "3", "4"])
+        self.assertEqual(hours(to_date=base), ["0"])
+        self.assertEqual([row["TempOut"] for row in main.load_station_rows(root, "hourly", limit=2)], ["3", "4"])
+
+    def test_short_and_blank_csv_rows(self):
+        path = Path(self.temp.name, "ragged.csv")
+        path.write_text("timestamp,a,b\n\nt1,1\nt2,1,2,3\n")
+        self.assertEqual(
+            list(main.iter_csv_rows(path)),
+            [{"timestamp": "t1", "a": "1", "b": None}, {"timestamp": "t2", "a": "1", "b": "2"}],
+        )
+
+    def test_snapshot_poll_skips_unchanged_data(self):
+        client = self.client()
+        first = client.get("/api/public/station/station/snapshot").get_json()
+        self.assertTrue(first["changed"])
+        since = first["snapshot"]["last_timestamp"]
+        unchanged = client.get("/api/public/station/station/snapshot", query_string={"since": since}).get_json()
+        self.assertEqual(unchanged, {"changed": False})
+        forced = client.get("/api/public/station/station/snapshot", query_string={"since": since, "force": "1"})
+        self.assertIn("snapshot", forced.get_json())
+        later = self.now + timedelta(seconds=30)
+        self.write_row("station", later, {
+            "timestamp": later.isoformat().replace("+00:00", "Z"), "uuid": "station", "TempOut": 21, XSS_FIELD: 1,
+        })
+        changed = client.get("/api/public/station/station/snapshot", query_string={"since": since}).get_json()
+        self.assertTrue(changed["changed"])
+        self.assertEqual(changed["snapshot"]["rows"], 2)
+
+    def test_large_responses_are_compressed_on_request(self):
+        client = self.client("bob")
+        plain = client.get("/station/station")
+        self.assertIsNone(plain.headers.get("Content-Encoding"))
+        packed = client.get("/station/station", headers={"Accept-Encoding": "gzip, br"})
+        self.assertEqual(packed.headers["Content-Encoding"], "gzip")
+        self.assertIn("Accept-Encoding", packed.headers["Vary"])
+        self.assertEqual(gzip.decompress(packed.get_data()), plain.get_data())
+        logo = client.post("/download", data={"instrument": "station"}, headers={"Accept-Encoding": "gzip"})
+        self.assertIsNone(logo.headers.get("Content-Encoding"))
+        logo.close()
+
+    def test_station_chart_is_thinned_on_long_windows(self):
+        with patch.object(main, "STATION_BROWSER_MAX_CHART_POINTS", 4):
+            for seconds in range(1, 11):
+                dt = self.now - timedelta(seconds=seconds)
+                self.write_row("dense", dt.replace(minute=dt.minute), {"timestamp": dt.isoformat(), "TempOut": seconds})
+            body = self.client("bob").get("/station/dense?page_size=50").get_data(as_text=True)
+        island = body.split('<script id="stationBrowseState" type="application/json">')[1].split("</script>")[0]
+        state = json.loads(island)
+        self.assertLessEqual(len(state["chart_labels"]), 5)
+        self.assertEqual(len(state["numeric_series_aligned"]["TempOut"]), len(state["chart_labels"]))
+        self.assertIn("all 10 rows", body)
 
     def test_config_needs_no_collector_settings(self):
         self.assertFalse(self.cfg["enable_influx"])

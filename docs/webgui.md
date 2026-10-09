@@ -57,6 +57,22 @@ The portal can be installed on phones and desktops ("Add to Home screen" / "Inst
 
 The home page station map and browse/download list use a lightweight latest-sample preview per station. They show the latest known station name, position, and timestamp without scanning the full historical archive, so the home page stays responsive even with large CSV storage trees.
 
+### Stations map
+
+- the map zooms to show every station that has coordinates; stations with missing or invalid coordinates are listed but not drawn
+- hovering a marker shows the station name; clicking it opens a popup with the UUID, policy, time of the last data, an `Open dashboard` button and, when the user may browse the station, a `Browse & download data` button
+- green markers can be browsed and downloaded by the current user, gray markers offer the dashboard only
+
+## Performance
+
+- station data is read by hour: a dashboard reads only the hourly files overlapping its trend window, located through the `YYYY/MM/DD` directories, so response time does not grow with the length of the archive
+- the admin dashboard and the watchdog read the newest files of each station only
+- the public dashboard polls every 5 seconds with the timestamp it already shows; while the station has not stored a newer row the answer is `{"changed": false}`, without rebuilding the trends
+- when InfluxDB is enabled it is queried from the start of the displayed window
+- HTML, JSON and JavaScript responses larger than 1 kB are gzip-compressed for browsers that accept it (a reverse proxy does not need to compress them again)
+- the station browser embeds each series once; on windows with more than 3000 rows the chart shows an evenly thinned series (the page says how many samples are skipped) while the table and the statistics use every row
+- choosing the `window` page size on a long window still renders every row in the table and produces a very large page
+
 ## Access policies
 
 Per station policy:

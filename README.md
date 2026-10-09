@@ -9,9 +9,9 @@ project only reads that data and serves it. It never connects to MQTT.
 ## Features
 
 - Installable progressive web app (web manifest, service worker, offline page) built on Bootstrap
-- Map-based station discovery on the home page
+- Map-based station discovery on the home page, with per-station popups
 - Data browsing per station with configurable charts and tables
-- Live station trend pages and a public sensor network dashboard
+- Live station trend pages and a public sensor network dashboard, reading only the hourly files a view needs
 - Public station dashboard with per-station trend-chart axis settings (JSON export/import)
 - Data download (ZIP) with authentication and per-station access policies
 - Accounts: admin approval of requests, forced/self-service password change, reset by email

@@ -44,6 +44,7 @@ rollback does not roll back the SQLite schema.
 | Duplicate alarm emails | More than one watchdog process is running. |
 | Forms return `403 Cross-site request rejected` | The browser's origin host differs from the request host, forwarded host, and `baseUrl` host. Set `baseUrl` to the URL users open and forward `Host`/`X-Forwarded-Host` from the proxy. |
 | Admin is sent to `/change-password` at first login | The account was created with the default or a sample `adminPassword`; choose a strong password. |
+| Dashboards are slow | Check the storage latency of `pathStorage` and that files follow `<station>/YYYY/MM/DD/<station>_YYYYMMDDZHH00.csv`; files elsewhere are found but cannot be skipped by date. With InfluxDB enabled, check its query time (`Influx query failed` warnings). |
 | No `Install app` option in the browser | Installation needs HTTPS (or `localhost`), and `/manifest.webmanifest` and `/service-worker.js` must be reachable through the proxy. |
 | A station disappeared from the home page | Its policy is `restricted` and the current user is not assigned to it. |
 | Login returns to home instead of requested URL | `next` must be a local path with one leading slash and no backslashes or control characters. |

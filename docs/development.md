@@ -29,7 +29,8 @@ cookie and response headers, password policy, single-use tokens, default-admin
 handling, sandboxed logo serving, download cleanup, limited row loading, non-finite
 values, watchdog resilience, enforced password changes, rows longer than the CSV
 header, map popup escaping, session-secret fallback, the onboarding-only username
-check, email validation of account requests, hiding of restricted stations, and the
+check, email validation of account requests, hiding of restricted stations, selection
+of hourly files, the unchanged-poll shortcut, response compression, chart thinning, and the
 progressive web app assets (doctype, manifest, icons, service worker).
 
 ## Container checks
