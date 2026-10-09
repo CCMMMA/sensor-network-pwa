@@ -91,8 +91,8 @@ sensor_network_pwa/        application package
   intervals.py, charts.py, dashboard.py   time windows, chart settings, public dashboard model
   anomalies.py, watchdog.py, mailer.py    anomaly evaluation, watchdog loop, email
   cli.py                              argument parsing and startup
-  web/                                Flask app factory, request hooks, route modules
-  web/templates/                      page templates (extend base.html) and the service worker
+  web/                                Flask app factory, request hooks, access helpers, one blueprint per area
+  web/templates/<blueprint>/          page templates (extend base.html) and the service worker
   web/static/                         script and stylesheet of each page
 webapp_wsgi.py             Gunicorn entry point (webapp_wsgi:app)
 pyproject.toml             ruff and mypy configuration
@@ -101,7 +101,7 @@ tests/                     unittest suite (temporary files only, no external ser
 docs/                      configuration, web GUI, deployment and operations guides
 config.json.sample         sample configuration
 Dockerfile, docker-compose.yml.sample, nginx/   container deployment
-.github/workflows/ci-cd.yml                     tests on Python 3.10-3.14, image build and GHCR publish
+.github/workflows/ci-cd.yml                     lint and type checks, tests on Python 3.10-3.14, image build, smoke test and GHCR publish
 ```
 
 ## Sharing data with the collector

@@ -2,9 +2,9 @@ name: CI/CD
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, development]
   push:
-    branches: [main]
+    branches: [main, development]
   workflow_dispatch:
 
 permissions:
@@ -15,6 +15,28 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  quality:
+    name: Lint, format and types
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install development tools
+        run: python -m pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check --output-format=github .
+      - name: Check formatting
+        run: ruff format --check .
+      - name: Type check
+        run: mypy
+
   test:
     name: Python ${{ matrix.python }}
     runs-on: ubuntu-latest
@@ -35,13 +57,6 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Check dependency compatibility
         run: python -m pip check
-      - name: Lint, format and type checks
-        if: matrix.python == '3.12'
-        run: |
-          python -m pip install -r requirements-dev.txt
-          ruff check .
-          ruff format --check .
-          mypy
       - name: Compile application
         run: python -m compileall -q main.py webapp_wsgi.py sensor_network_pwa tests
       - name: Run regression and startup tests
@@ -49,7 +64,7 @@ jobs:
 
   container:
     name: Build, test, and deliver container
-    needs: test
+    needs: [quality, test]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -72,18 +87,41 @@ jobs:
           docker run --rm
           --volume "${GITHUB_WORKSPACE}/tests:/tests:ro"
           pwa:ci python -m unittest discover -s /tests -v
+      - name: Serve pages and static files from the built image
+        shell: bash
+        run: |
+          set -euo pipefail
+          config_dir="$(mktemp -d)"
+          chmod 755 "$config_dir"
+          printf '{"pathStorage": "/data", "adminPassword": "ci-%s"}\n' "$GITHUB_SHA" > "$config_dir/config.json"
+          docker run --detach --name pwa-smoke --publish 127.0.0.1:8080:8080 --tmpfs /data \
+            --env PWA_CONFIG=/config/config.json --volume "$config_dir:/config:ro" pwa:ci
+          trap 'docker logs pwa-smoke; docker rm --force pwa-smoke' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail --output /dev/null http://127.0.0.1:8080/; then break; fi
+            if [ "$attempt" = 30 ]; then echo "The application did not start" >&2; exit 1; fi
+            sleep 1
+          done
+          for path in / /login /offline /manifest.webmanifest /service-worker.js /static/js/pwa.js; do
+            curl --silent --show-error --fail --output /dev/null "http://127.0.0.1:8080${path}"
+            echo "ok ${path}"
+          done
       - name: Publish tested image to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: >-
+          github.event_name == 'push' &&
+          (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development')
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          # main moves "latest"; development moves "development".
+          if [ "$GITHUB_REF_NAME" = main ]; then channel=latest; else channel=development; fi
           trap 'docker logout ghcr.io' EXIT
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker tag pwa:ci "${image}:sha-${GITHUB_SHA}"
-          docker tag pwa:ci "${image}:latest"
+          docker tag pwa:ci "${image}:${channel}"
           docker push "${image}:sha-${GITHUB_SHA}"
-          docker push "${image}:latest"
-          printf 'Published `%s:sha-%s` and `%s:latest`.\n' "$image" "$GITHUB_SHA" "$image" >> "$GITHUB_STEP_SUMMARY"
+          docker push "${image}:${channel}"
+          printf 'Published `%s:sha-%s` and `%s:%s`.\n' "$image" "$GITHUB_SHA" "$image" "$channel" >> "$GITHUB_STEP_SUMMARY"
