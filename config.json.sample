@@ -1,0 +1,35 @@
+{
+  "logLevel": "INFO",
+  "pathStorage": "/tmp/sensor-network-collector",
+  "influxdb": false,
+  "influxdbUrl": "http://localhost:8086",
+  "influxdbToken": "replace-with-influx-read-token",
+  "influxdbOrg": "replace-with-influx-org",
+  "influxdbBucket": "replace-with-influx-bucket",
+  "influxMeasurement": "mqtt_data",
+  "httpHost": "0.0.0.0",
+  "httpPort": 8080,
+  "baseUrl": "http://localhost:8080",
+  "webAppLogo": "/tmp/sensor-network-collector/logo.png",
+  "webAppLink": "https://meteo.uniparthenope.it",
+  "webInfoLink": "",
+  "authDbPath": "/tmp/sensor-network-collector/collector_auth.sqlite",
+  "webSessionSecret": "replace-with-a-strong-random-secret",
+  "adminUser": "admin",
+  "adminPassword": "change-me-now",
+  "smtpEnabled": false,
+  "smtpHost": "smtp.example.com",
+  "smtpPort": 587,
+  "smtpUser": "mailer@example.com",
+  "smtpPass": "replace-with-smtp-password",
+  "smtpFrom": "collector@example.com",
+  "smtpUseTls": true,
+  "watchdogIntervalSec": 60,
+  "signalkPathMap": {
+    "SoilMoisture": {
+      "meta": {
+        "units": "%"
+      }
+    }
+  }
+}

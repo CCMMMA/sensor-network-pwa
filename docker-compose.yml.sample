@@ -1,0 +1,27 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sensor-network-web
+    restart: unless-stopped
+    command: ["gunicorn", "--workers", "2", "--bind", "0.0.0.0:8080", "--worker-tmp-dir", "/tmp", "webapp_wsgi:app"]
+    environment:
+      PWA_CONFIG: /app/config.json
+    volumes:
+      - ./config.json:/app/config.json:ro
+      # Same host directory that sensor-network-collector mounts as /data.
+      - ./data:/data
+    ports:
+      - "8080:8080"
+
+  watchdog:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sensor-network-watchdog
+    restart: unless-stopped
+    command: ["python", "main.py", "--config", "/app/config.json", "--watchdog-only"]
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./data:/data

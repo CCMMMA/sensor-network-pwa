@@ -1,0 +1,268 @@
+import csv
+import glob
+import io
+import json
+import os
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import patch
+
+import main
+
+STRONG = "Str0ng!Passw0rd"
+XSS_FIELD = "</script><script>alert(1)</script>"
+
+
+class WebAndAuthTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        config = root / "config.json"
+        config.write_text(json.dumps({
+            "pathStorage": str(root / "storage"), "webSessionSecret": "test-only-secret",
+            "baseUrl": "https://collector.example.org",
+        }))
+        self.cfg = main.load_config(str(config))
+        self.store = main.AccessStore(self.cfg["auth_db_path"])
+        self.store.ensure_admin("admin", STRONG)
+        self.assertEqual(self.store.create_user("bob", STRONG, "bob@example.org"), (True, "User created"))
+        self.now = datetime.now(timezone.utc).replace(microsecond=0)
+        self.write_row("station", self.now, {
+            "timestamp": self.now.isoformat().replace("+00:00", "Z"), "uuid": "station",
+            "TempOut": 20, XSS_FIELD: 1,
+        })
+        patcher = patch.dict(main.runtime)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.app = main.create_web_app(self.cfg, self.store)
+
+    def write_row(self, instrument_uuid, dt, row):
+        # Same layout as the hourly CSV files written by sensor-network-collector.
+        path = (Path(self.cfg["storage_root"]) / instrument_uuid / dt.strftime("%Y/%m/%d")
+                / f"{instrument_uuid}_{dt.strftime('%Y%m%d')}Z{dt.strftime('%H')}00.csv")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        is_new = not path.exists()
+        with path.open("a", newline="", encoding="utf-8") as stream:
+            writer = csv.DictWriter(stream, fieldnames=list(row))
+            if is_new:
+                writer.writeheader()
+            writer.writerow(row)
+
+    def client(self, username=None):
+        client = self.app.test_client()
+        if username:
+            response = client.post("/login", data={"username": username, "password": STRONG})
+            self.assertEqual(response.status_code, 302)
+        return client
+
+    def test_non_admin_can_open_anomaly_log(self):
+        self.store.upsert_anomaly("station", "lost_connectivity", "lost_connectivity:no_data")
+        self.store.set_policy("station", "account", "admin")
+        items = self.store.list_anomalies_for_user({"username": "bob", "role": "user"})
+        self.assertEqual([item["station_uuid"] for item in items], ["station"])
+        self.assertEqual(self.client("bob").get("/anomalies").status_code, 200)
+
+    def test_station_page_escapes_field_names_and_tolerates_bad_page(self):
+        response = self.client("bob").get("/station/station?page=abc")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertNotIn(XSS_FIELD, body)
+        island = body.split('<script id="stationBrowseState" type="application/json">')[1].split("</script>")[0]
+        self.assertIn(XSS_FIELD, json.loads(island)["numeric_cols"])
+
+    def test_cross_site_writes_are_rejected(self):
+        client = self.client("admin")
+        form = {"instrument_uuid": "station", "policy": "open"}
+        response = client.post("/admin/policy", data=form, headers={"Origin": "https://evil.example"})
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.store.get_policy("station"), "account")
+        for origin in ("http://localhost", "https://collector.example.org", None):
+            with self.subTest(origin=origin):
+                headers = {"Origin": origin} if origin else {}
+                self.assertEqual(client.post("/admin/policy", data=form, headers=headers).status_code, 302)
+        self.assertEqual(self.store.get_policy("station"), "open")
+
+    def test_session_cookie_and_security_headers(self):
+        response = self.app.test_client().post("/login", data={"username": "bob", "password": STRONG})
+        self.assertIn("SameSite=Lax", response.headers["Set-Cookie"])
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+
+    def test_password_change_requires_strong_password(self):
+        client = self.client("bob")
+        client.post("/change-password", data={"password": "weakpass", "password2": "weakpass"})
+        self.assertIsNone(self.store.authenticate("bob", "weakpass"))
+        client.post("/change-password", data={"password": "N3w!Passw0rd#", "password2": "N3w!Passw0rd#"})
+        self.assertIsNotNone(self.store.authenticate("bob", "N3w!Passw0rd#"))
+
+    def test_weak_reset_password_keeps_token_usable(self):
+        token = self.store.create_password_reset_token("bob")
+        client = self.client()
+        client.post("/reset-password", query_string={"token": token},
+                    data={"password": "weakpass", "password2": "weakpass"})
+        self.assertIsNotNone(self.store.get_password_reset_user(token))
+        client.post("/reset-password", query_string={"token": token},
+                    data={"password": "N3w!Passw0rd#", "password2": "N3w!Passw0rd#"})
+        self.assertIsNotNone(self.store.authenticate("bob", "N3w!Passw0rd#"))
+
+    def test_tokens_are_single_use(self):
+        reset = self.store.create_password_reset_token("bob")
+        self.assertIsNotNone(self.store.consume_password_reset_token(reset))
+        self.assertIsNone(self.store.consume_password_reset_token(reset))
+        login = self.store.create_login_token("bob")
+        self.assertEqual(self.store.consume_login_token(login)["username"], "bob")
+        self.assertIsNone(self.store.consume_login_token(login))
+
+    def test_onboarding_token_is_single_use(self):
+        self.store.create_account_request("new@example.org", "please")
+        request_id = self.store.list_account_requests("pending")[0]["id"]
+        self.store.approve_request(request_id, "admin")
+        token = self.store.create_account_request_token(request_id)
+        self.assertEqual(self.store.complete_account_request(token, "carol", STRONG), (True, "Account created"))
+        ok, _ = self.store.complete_account_request(token, "dave", STRONG)
+        self.assertFalse(ok)
+        self.assertFalse(self.store.username_exists("dave"))
+
+    def test_default_admin_password_forces_change(self):
+        with self.assertLogs(main.logger, level="WARNING"):
+            self.store.ensure_admin("root", "admin")
+        self.assertEqual(self.store.get_user("root")["force_password_change"], 1)
+        self.assertEqual(self.store.get_user("admin")["force_password_change"], 0)
+
+    def test_uploaded_svg_logo_is_served_sandboxed(self):
+        client = self.client("bob")
+        svg = b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>"
+        response = client.post("/station/station/logo", data={"logo": (io.BytesIO(svg), "logo.svg")})
+        self.assertEqual(response.status_code, 302)
+        name = Path(self.store.get_station_logo("station")["logo_path"]).name
+        response = client.get(f"/assets/station/{name}")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("sandbox", response.headers["Content-Security-Policy"])
+        response.close()
+
+    def test_download_removes_temporary_archive(self):
+        pattern = os.path.join(tempfile.gettempdir(), "collector_download_*.zip")
+        before = set(glob.glob(pattern))
+        response = self.client("bob").post("/download", data={"instrument": "station"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_data().startswith(b"PK"))
+        response.close()
+        self.assertEqual(set(glob.glob(pattern)) - before, set())
+
+    def test_invalid_form_values_return_400(self):
+        response = self.client("bob").post(
+            "/anomalies/silence", data={"station_uuid": "station", "anomaly_type": "x", "hours": "soon"})
+        self.assertEqual(response.status_code, 400)
+        response = self.client("admin").post(
+            "/station/station/chart-settings/import", data={"settings_file": (io.BytesIO(b"[]"), "s.json")})
+        self.assertEqual(response.status_code, 400)
+
+    def test_limited_row_load_returns_latest_rows_in_order(self):
+        for hours in (3, 2, 1):
+            dt = self.now - timedelta(hours=hours)
+            for minute in (0, 1):
+                self.write_row("multi", dt.replace(minute=minute), {"timestamp": f"{hours}-{minute}"})
+        root = self.cfg["storage_root"]
+        everything = [row["timestamp"] for row in main.load_station_rows(root, "multi", limit=None)]
+        self.assertEqual(everything, ["3-0", "3-1", "2-0", "2-1", "1-0", "1-1"])
+        for limit in (1, 3, 6, 50):
+            with self.subTest(limit=limit):
+                rows = main.load_station_rows(root, "multi", limit=limit)
+                self.assertEqual([row["timestamp"] for row in rows], everything[-limit:])
+
+    def test_non_finite_values_are_not_numeric(self):
+        for value in ("nan", "inf", "-inf", float("nan")):
+            self.assertIsNone(main._to_float(value))
+        self.assertEqual(main._to_float(" 1.5 "), 1.5)
+        row = {"timestamp": self.now.isoformat(), "TempOut": "nan"}
+        self.write_row("nanstation", self.now, row)
+        snapshot = main.build_public_station_snapshot(
+            self.cfg["storage_root"], "nanstation", cfg=self.cfg, access_store=self.store)
+        self.assertEqual(snapshot["series"], [])
+
+    def test_watchdog_scan_continues_after_station_failure(self):
+        self.write_row("other", self.now, {"timestamp": self.now.isoformat(), "TempOut": 1, "HumOut": 2})
+        calls = []
+
+        def evaluate(station_uuid, rows, now_dt):
+            calls.append(station_uuid)
+            if station_uuid == "other":
+                raise RuntimeError("boom")
+            return {"alarms": []}
+
+        with patch("main.evaluate_station_anomalies", evaluate), self.assertLogs(main.logger, level="ERROR"):
+            main._run_watchdog_scan(self.cfg, self.store, self.cfg["storage_root"])
+        self.assertEqual(calls, ["other", "station"])
+
+    def test_login_redirects_only_to_local_paths(self):
+        client = self.app.test_client()
+        for target in ("https://example.com", "//example.com", "/\\example.com", "/\t/example.com"):
+            with self.subTest(target=target):
+                response = client.post("/login", query_string={"next": target},
+                                       data={"username": "bob", "password": STRONG})
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(response.headers["Location"], "/")
+        response = client.post("/login", query_string={"next": "/?window=day"},
+                               data={"username": "bob", "password": STRONG})
+        self.assertEqual(response.headers["Location"], "/?window=day")
+
+    def test_forced_password_change_blocks_other_pages(self):
+        self.store.set_force_password_change("bob", True)
+        client = self.client("bob")
+        response = client.get("/anomalies")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/change-password")
+        self.assertEqual(client.post("/download", data={"instrument": "station"}).status_code, 403)
+        client.post("/change-password", data={"password": "N3w!Passw0rd#", "password2": "N3w!Passw0rd#"})
+        self.assertEqual(client.get("/anomalies").status_code, 200)
+
+    def test_rows_longer_than_header_are_tolerated(self):
+        path = next(Path(self.cfg["storage_root"], "station").rglob("*.csv"))
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(f"{self.now.isoformat()},station,21,2,surplus,values\n")
+        rows = main.load_station_rows(self.cfg["storage_root"], "station")
+        self.assertTrue(all(None not in row for row in rows))
+        self.assertEqual(self.client("admin").get("/api/admin/dashboard").status_code, 200)
+
+    def test_station_name_is_not_rendered_as_html_on_map(self):
+        name = "<img src=x onerror=alert(1)>"
+        self.write_row("named", self.now, {"timestamp": self.now.isoformat(), "name": name, "lat": 40, "lon": 14})
+        body = self.client().get("/").get_data(as_text=True)
+        self.assertNotIn(name, body)
+        self.assertNotIn(self.cfg["storage_root"], body)
+
+    def test_sample_session_secret_is_replaced_by_stored_secret(self):
+        cfg = dict(self.cfg, web_session_secret="replace-with-a-strong-random-secret")
+        with self.assertLogs(main.logger, level="WARNING"):
+            first = main.create_web_app(cfg, self.store).secret_key
+        self.assertNotEqual(first, cfg["web_session_secret"])
+        with self.assertLogs(main.logger, level="WARNING"):
+            self.assertEqual(main.create_web_app(dict(cfg, web_session_secret=""), self.store).secret_key, first)
+        self.assertEqual(self.app.secret_key, "test-only-secret")
+
+    def test_username_check_requires_onboarding_link(self):
+        self.assertEqual(self.client().get("/api/check-username?username=bob").status_code, 403)
+        self.store.create_account_request("new@example.org", "please")
+        request_id = self.store.list_account_requests("pending")[0]["id"]
+        self.store.approve_request(request_id, "admin")
+        token = self.store.create_account_request_token(request_id)
+        response = self.client().get("/api/check-username", query_string={"username": "bob", "token": token})
+        self.assertEqual(response.get_json()["available"], False)
+
+    def test_account_request_needs_valid_email(self):
+        for email in ("nobody", "a@b", "a b@example.org", "a@example.org,b@example.org"):
+            with self.subTest(email=email):
+                self.assertFalse(self.store.create_account_request(email, "")[0])
+        self.assertEqual(self.store.list_account_requests(), [])
+
+    def test_config_needs_no_collector_settings(self):
+        self.assertFalse(self.cfg["enable_influx"])
+        self.assertTrue(self.cfg["auth_db_path"].endswith("collector_auth.sqlite"))
+        with patch.dict(main.runtime):
+            self.assertIsNone(main.init_influx_runtime(self.cfg))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local deployment files (copied from the *.sample files)
+config.json
+docker-compose.yml
