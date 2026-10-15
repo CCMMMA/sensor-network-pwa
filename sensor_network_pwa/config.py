@@ -59,6 +59,18 @@ def _web_settings(raw: dict, storage_root) -> dict:
         "web_app_short_name": _text(raw, ["webAppShortName"], "WEB_APP_SHORT_NAME").strip() or "Sensor Network",
         "web_app_link": _text(raw, ["webAppLink"], "WEB_APP_LINK").strip(),
         "web_info_link": _text(raw, ["webInfoLink"], "WEB_INFO_LINK").strip(),
+        "map_tile_url": _text(
+            raw,
+            ["mapTileUrl"],
+            "MAP_TILE_URL",
+            "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        ).strip(),
+        "map_tile_attribution": _text(
+            raw,
+            ["mapTileAttribution"],
+            "MAP_TILE_ATTRIBUTION",
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        ).strip(),
         "base_url": _text(raw, ["baseUrl"], "BASE_URL").strip(),
     }
 

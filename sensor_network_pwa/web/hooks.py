@@ -67,7 +67,9 @@ def reject_cross_site_writes():
 
 def add_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("Referrer-Policy", "same-origin")
+    # Cross-origin map providers require the requesting site's origin for abuse control.
+    # This policy sends only the origin over HTTPS, without leaking URL paths or queries.
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     return response
 
 

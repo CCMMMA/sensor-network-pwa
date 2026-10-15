@@ -39,6 +39,9 @@ Set (see [configuration](configuration.md)):
 - `/api/check-username?username=...&token=...` username availability for the onboarding
   form; needs a valid onboarding token, otherwise `403`
 - `/api/admin/dashboard` JSON polled by the admin network dashboard
+- `/api/query` authenticated JSON query API
+- `/api/download` authenticated raw-hourly-file ZIP API
+- `/workflows`, `/api/workflows` node workflow editor and CRUD API
 - `/admin` admin console
 - `/admin/dashboard` admin-only network dashboard
 - `/anomalies` anomaly log and silence actions
@@ -64,8 +67,8 @@ The home page station map and browse/download list use a lightweight latest-samp
 ### Stations map
 
 - the map zooms to show every station that has coordinates; stations with missing or invalid coordinates are listed but not drawn
-- hovering a marker shows the station name; clicking it opens a popup with the UUID, policy, time of the last data, an `Open dashboard` button and, when the user may browse the station, a `Browse & download data` button
-- green markers can be browsed and downloaded by the current user, gray markers offer the dashboard only
+- hovering a marker shows the station name; clicking it opens a popup with the UUID, policy, time of the last data, an `Open dashboard` button and, when permitted, a data-browsing button
+- green markers can be browsed by the current user; CSV download is a separate permission
 
 ## Performance
 
@@ -79,14 +82,26 @@ The home page station map and browse/download list use a lightweight latest-samp
 
 ## Access policies
 
-Per station policy:
+Regular users receive no station rights when their account is created. Administrators
+assign two independent rights per station: `Browse` permits viewing past data, charts,
+tables and statistics; `Download CSV` permits exporting a chosen interval with selected
+columns (and therefore also permits browsing that interval). Administrators always have
+both rights.
 
-- `open`: no authentication for data download
-- `account`: authenticated users
-- `restricted`: only explicitly assigned users
-- admins always allowed
+`Can API` is a separate account permission. It permits a regular user to call the data
+API and open the workflow editor, but does not bypass station rights. Administrators
+always have API access. API queries and workflow station nodes require Browse access;
+API downloads require Download access. Consequently, open stations work in the API for
+an API-enabled account, while restricted stations remain unavailable unless assigned.
 
-Server-side permission checks are enforced for station browsing and downloads.
+The station visibility policy remains separate:
+
+- `open`: browser data views/downloads need no station assignment; the protected data
+  API still requires a logged-in account with `Can API`
+- `account`: the dashboard is visible, but historical data still requires an assignment
+- `restricted`: the station is hidden except from explicitly assigned users
+
+Server-side permission checks are enforced separately for browsing and downloads.
 
 Public station dashboards follow the policy too: stations with the `open` or `account`
 policy have a dashboard anyone can read, while a `restricted` station is hidden from
@@ -105,9 +120,10 @@ returns to the tab it was started from (`/admin#users`, `/admin#stations`,
 - **Users**: searchable list with role, status, and a summary of station rights.
   `New user` opens the creation form (the password rules are shown; "ask for a new
   password at the first login" is ticked by default). `Manage` opens, for one user:
-  - a table of all stations with a `Data access` and a `Chart settings` checkbox per
-    station; data access can be chosen only for stations with the Restricted policy,
-    the others show "Yes, by policy"
+  - a table of all stations with separate `Browse`, `Download CSV`, and `Chart settings`
+    checkboxes; a newly created regular user has none of these rights
+  - a `Can API` control, separate from station rights, that grants or revokes access to
+    the protected data API and workflow editor
   - account actions: change the email, assign a strong password (optionally requiring
     another change at next login), ask for or stop asking for a new password, make
     administrator / regular user, disable / enable the account
@@ -128,8 +144,93 @@ Rules enforced by the server:
 
 Form endpoints (all `POST`, admin only): `/admin/create-user`, `/admin/user-update`,
 `/admin/user-permissions`, `/admin/station-permissions`, `/admin/policy`,
-`/admin/force-password`, `/admin/set-password`, `/admin/requests/<id>/approve`, `/admin/requests/<id>/reject`,
+`/admin/user-api`, `/admin/force-password`, `/admin/set-password`, `/admin/requests/<id>/approve`, `/admin/requests/<id>/reject`,
 and the single-assignment `/admin/user-access` and `/admin/user-control`.
+
+## Data API and workflows
+
+API endpoints use the logged-in web session and return `401` when there is no session
+or `403` when `Can API`/station rights are missing.
+
+- `GET /api/query?station=<uuid>[,<uuid>]&from=<ISO>&to=<ISO>&fields=<field>[,<field>]&limit=1000`
+  returns time-ordered JSON rows. The limit is capped at 10,000 rows per station.
+- `GET /api/download?station=<uuid>[,<uuid>]&from=<ISO>&to=<ISO>` returns a ZIP containing
+  the original hourly CSV files. `from` and `to` are optional UTC ISO-8601 timestamps.
+- `GET /api/workflows`, `POST /api/workflows`, `PUT /api/workflows/<id>` and
+  `DELETE /api/workflows/<id>` manage only the logged-in user's workflows.
+
+For example:
+
+```text
+GET /api/query?station=station-a,station-b&from=2026-10-15T00:00:00Z&to=2026-10-15T12:00:00Z&fields=RainRate,TempOut&limit=1000
+```
+
+The response groups rows by station. CSV values remain JSON strings, matching their
+stored representation, and each projected row retains `timestamp` when it exists:
+
+```json
+{
+  "from": "2026-10-15T00:00:00Z",
+  "to": "2026-10-15T12:00:00Z",
+  "stations": [
+    {
+      "station": "station-a",
+      "rows": [{"timestamp": "2026-10-15T11:59:00Z", "RainRate": "301.2"}]
+    }
+  ]
+}
+```
+
+`station` is required and accepts a comma-separated list. `from`, `to`, and `fields`
+are optional. Bounds are UTC when their ISO value has no offset. `to` must not precede
+`from`; `limit` defaults to 1,000 and is clamped to 1–10,000 per station. The query
+result applies exact timestamp bounds. A ZIP download instead contains each original
+hourly file overlapping the bounds, so boundary files are not rewritten to remove
+individual rows.
+
+Workflow create/update bodies have this shape:
+
+```json
+{
+  "name": "Extreme rain email",
+  "enabled": true,
+  "graph": {
+    "nodes": [
+      {"id": "rain", "type": "station", "x": 40, "y": 80,
+       "data": {"station": "station-a"}},
+      {"id": "heavy", "type": "condition", "x": 280, "y": 80,
+       "data": {"field": "RainRate", "operator": ">", "value": 300}},
+      {"id": "notify", "type": "email", "x": 520, "y": 80,
+       "data": {"recipient": "alerts@example.org"}}
+    ],
+    "edges": [
+      {"source": "rain", "target": "heavy"},
+      {"source": "heavy", "target": "notify"}
+    ]
+  }
+}
+```
+
+Node IDs must be unique. Each condition has exactly one station input; each email has
+one or more condition inputs. Supported operators are `>`, `>=`, `<`, `<=`, `==`, and
+`!=`. Graphs are limited to 50 nodes and 100 edges. Station nodes may reference public
+stations or stations the owner can browse. Recipients must be syntactically valid email
+addresses. Arbitrary code, HTTP requests, shell commands, and custom node types are not
+accepted.
+
+The `/workflows` editor uses Node-RED-style nodes and wires. The supported, intentionally
+bounded node catalogue is Station input → numeric Condition → Send email. For example,
+connect a station to `RainRate > 300`, then connect that condition to an email node.
+
+![Workflow editor showing a station connected to a RainRate condition and an email action](images/workflow-editor.jpg)
+
+The watchdog evaluates enabled flows using the newest stored sample. An email is sent
+only when the condition changes from false to true; it becomes eligible again after
+the condition becomes false. Workflows run only while their owner is active, retains
+`Can API`, and can still browse every referenced station. SMTP uses the existing mail
+configuration. Run exactly one watchdog process to avoid duplicate event evaluation.
+The workflow list also exposes `last_run_at` and `last_error` for operational diagnosis.
+Changing or deleting a workflow is restricted to its owner, including for administrators.
 
 ## Chart control rights
 
@@ -144,7 +245,7 @@ This is used for the Public Station Dashboard trend charts only.
 ## Station data page
 
 `/station/<uuid>` is the page for browsing, plotting and downloading the data of one
-station. It needs data access to the station; anonymous visitors of a non-open station
+station. It needs Browse permission; anonymous visitors of a non-open station
 are sent to the login page.
 
 Units shown follow the raw MQTT/storage field units, not the Signal K converted metadata
@@ -194,6 +295,9 @@ units (`WindDir` is shown as `deg` even if the Signal K path uses `rad`).
 Both are produced in the browser; nothing is sent to the server.
 
 ### Data table and downloads
+
+The table is available with Browse permission. The following export controls are shown
+only with Download CSV permission:
 
 - `Download this range (CSV)`: one CSV file with every row of the selected range and
   the columns currently shown (`/station/<uuid>/export.csv`, which takes the same
@@ -300,6 +404,7 @@ With SMTP enabled:
 - account approval email with onboarding link when request is approved
 - password-reset email from forgot-password flow
 - station failure, reminder, and recovery emails to admins and station-related users (see [Failure notifications](#failure-notifications))
+- workflow email actions to the address configured in an email node
 
 SMTP fallback behavior:
 
@@ -443,11 +548,12 @@ Connectivity alarms are based on dynamic threshold:
 
 The auth database now stores:
 
-- users
+- users, including the global `Can API` flag
 - account requests
-- station download policies
-- per-user restricted station access
+- station visibility policies
+- per-user Browse and Download assignments
 - per-user station chart-control rights
+- user-owned workflow graphs, enabled state, last-run errors, and node firing state
 - login and password-reset tokens
 - anomalies and anomaly silence windows
 - per-user notification time and notifications
@@ -457,10 +563,17 @@ The auth database now stores:
 ## Built-in protections
 
 - the session cookie is `HttpOnly` and `SameSite=Lax`
-- `POST` requests whose `Origin` (or `Referer`) names a host other than the request host, the forwarded host, or the `baseUrl` host are rejected with `403 Cross-site request rejected`; set `baseUrl` to the URL users actually open
-- responses carry `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`
+- state-changing `POST`, `PUT`, and `DELETE` requests whose `Origin` (or `Referer`)
+  names a host other than the request host, the forwarded host, or the `baseUrl` host
+  are rejected with `403 Cross-site request rejected`; set `baseUrl` to the URL users
+  actually open
+- responses carry `X-Content-Type-Options: nosniff` and
+  `Referrer-Policy: strict-origin-when-cross-origin`; cross-origin providers receive
+  only the site origin, while URL paths and query strings remain private
 - station names, field names, and values coming from MQTT payloads are always rendered as text, including in the home-page map popups
 - account requests need a syntactically valid email address
+- workflow graphs use a fixed node catalogue, validate every edge and email address,
+  and recheck station access during every watchdog run
 - CSV rows with more values than the file header are read without the surplus values
 - the station browser table offers every column present in the selected window, also when hourly files have different headers
 - Chart.js is loaded from the CDN pinned to major version 4

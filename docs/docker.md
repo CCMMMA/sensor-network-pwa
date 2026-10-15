@@ -46,7 +46,8 @@ docker compose logs -f web watchdog
 ```
 
 - `web` serves the browser-facing application through Gunicorn
-- `watchdog` scans stations for anomalies and sends alarm emails; keep a single instance
+- `watchdog` scans stations for anomalies, evaluates enabled workflows, and sends
+  alarm/workflow emails; keep a single instance
 
 ## Backup
 

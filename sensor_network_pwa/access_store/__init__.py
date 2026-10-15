@@ -14,8 +14,8 @@ from sensor_network_pwa.access_store.notifications import (
     NotificationsMixin,
     normalize_notification_interval,
 )
-from sensor_network_pwa.access_store.station_settings import StationSettingsMixin
 from sensor_network_pwa.access_store.tokens import TokensMixin
+from sensor_network_pwa.access_store.workflows import WorkflowsMixin
 
 __all__ = [
     "DEFAULT_NOTIFICATION_INTERVAL_MIN",
@@ -33,7 +33,7 @@ class AccessStore(
     TokensMixin,
     NotificationsMixin,
     AnomaliesMixin,
-    StationSettingsMixin,
+    WorkflowsMixin,
 ):
     """The auth database. Users and permissions come in through the mixins that build on them."""
 

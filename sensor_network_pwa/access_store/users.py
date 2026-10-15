@@ -42,7 +42,8 @@ class UsersMixin(StoreBase):
     def get_user(self, username: str):
         with self._connect() as con:
             row = con.execute(
-                "SELECT username,email,role,active,created_at,force_password_change FROM users WHERE username = ?",
+                "SELECT username,email,role,active,created_at,force_password_change,can_api "
+                "FROM users WHERE username = ?",
                 (username,),
             ).fetchone()
             return dict(row) if row else None
@@ -50,7 +51,8 @@ class UsersMixin(StoreBase):
     def list_users(self):
         with self._connect() as con:
             rows = con.execute(
-                "SELECT username,email,role,active,created_at,force_password_change FROM users ORDER BY username"
+                "SELECT username,email,role,active,created_at,force_password_change,can_api "
+                "FROM users ORDER BY username"
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -61,7 +63,7 @@ class UsersMixin(StoreBase):
         with self._connect() as con:
             row = con.execute(
                 """
-                SELECT username,email,role,active,created_at,force_password_change
+                SELECT username,email,role,active,created_at,force_password_change,can_api
                 FROM users
                 WHERE active = 1 AND (username = ? OR lower(email) = lower(?))
                 LIMIT 1
@@ -73,7 +75,7 @@ class UsersMixin(StoreBase):
     def authenticate(self, username: str, password: str):
         with self._connect() as con:
             row = con.execute(
-                "SELECT username,password_hash,email,role,active,created_at,force_password_change"
+                "SELECT username,password_hash,email,role,active,created_at,force_password_change,can_api"
                 " FROM users WHERE username = ?",
                 (username,),
             ).fetchone()
@@ -90,6 +92,7 @@ class UsersMixin(StoreBase):
             "active": int(row["active"]),
             "created_at": row["created_at"],
             "force_password_change": int(row["force_password_change"] or 0),
+            "can_api": int(row["can_api"] or 0),
         }
 
     def create_user(self, username: str, password: str, email: str, role: str = "user", active: int = 1):
@@ -163,6 +166,11 @@ class UsersMixin(StoreBase):
             if cur.rowcount <= 0:
                 return False, "User not found"
         return True, "Password-change policy updated"
+
+    def set_can_api(self, username: str, allow: bool):
+        with self._lock, self._connect() as con:
+            cur = con.execute("UPDATE users SET can_api=? WHERE username=?", (int(allow), username.strip()))
+        return (bool(cur.rowcount), "API permission updated" if cur.rowcount else "User not found")
 
     def change_password(self, username: str, new_password: str, force_password_change: bool = False):
         ok, password_msg = validate_password_strength(new_password)

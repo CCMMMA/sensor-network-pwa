@@ -6,7 +6,8 @@ This document covers production deployment of the web app via WSGI (Gunicorn).
 
 - serves Flask web GUI (`webapp_wsgi.py`)
 - reads data written by [`sensor-network-collector`](https://github.com/CCMMMA/sensor-network-collector); MQTT ingest is not part of this project
-- Gunicorn workers do not run the anomaly watchdog: run `python main.py --config <config> --watchdog-only` as a separate single process
+- Gunicorn workers do not run anomaly detection or workflows: run
+  `python main.py --config <config> --watchdog-only` as a separate single process
 
 ## Prerequisites
 
@@ -41,7 +42,7 @@ Required keys:
 Optional but commonly relevant:
 
 - `webAppLogo`
-- `smtpHost` / `smtpFrom` for account and alarm emails
+- `smtpHost` / `smtpFrom` for account, alarm, and workflow emails
 - if `smtpHost` is omitted, email features remain inactive
 
 ## Run Gunicorn
@@ -183,7 +184,7 @@ The config mounts below are read-only. `./data` must be the directory the collec
 
 This Compose setup runs:
 
-- `watchdog`: anomaly detection and alarm emails (single process)
+- `watchdog`: anomaly detection, workflow evaluation, and email actions (single process)
 - `web`: Gunicorn serving `webapp_wsgi:app`
 - `nginx`: local reverse proxy listening on host port `8087`
 
@@ -381,5 +382,7 @@ docker compose restart watchdog
 - Verify app reachable at public URL
 - Verify login/session persistence across restarts
 - Verify anomalies page and admin dashboard load
+- Verify an administrator can grant `Can API`, and that an API-enabled user can open
+  `/workflows` and query only permitted stations
 - Verify fast-login links in email use correct host (`baseUrl`)
 - Verify forgot-password emails generate reset links with the same public host

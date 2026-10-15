@@ -162,13 +162,13 @@
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
       <h2 class="h5 mb-0">Data</h2>
       <div class="d-flex flex-wrap gap-2">
-        <a class="btn btn-primary btn-sm" id="rangeCsvLink" href="{{ url_for('stations.export_station_csv', instrument_uuid=instrument_uuid, **range_args) }}" data-base="{{ url_for('stations.export_station_csv', instrument_uuid=instrument_uuid, **range_args) }}">Download this range (CSV)</a>
-        <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#zipPanel">Raw files (ZIP)&hellip;</button>
+        {% if can_download %}<a class="btn btn-primary btn-sm" id="rangeCsvLink" href="{{ url_for('stations.export_station_csv', instrument_uuid=instrument_uuid, **range_args) }}" data-base="{{ url_for('stations.export_station_csv', instrument_uuid=instrument_uuid, **range_args) }}">Download this range (CSV)</a>{% endif %}
+        {% if can_download %}<button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#zipPanel">Raw files (ZIP)&hellip;</button>{% endif %}
       </div>
     </div>
 
     <div class="collapse mb-3" id="zipPanel">
-      <form method="post" action="{{ url_for('stations.download') }}" class="border rounded p-3 bg-white d-flex flex-wrap align-items-end gap-2">
+      {% if can_download %}<form method="post" action="{{ url_for('stations.download') }}" class="border rounded p-3 bg-white d-flex flex-wrap align-items-end gap-2">
         <input type="hidden" name="instrument" value="{{ instrument_uuid }}"/>
         <div>
           <label class="form-label mb-1" for="zipFrom">From (UTC)</label>
@@ -180,7 +180,7 @@
         </div>
         <button class="btn btn-primary btn-sm" type="submit">Download ZIP</button>
         <div class="form-text w-100">The original hourly CSV files of the station, for any period. Leave both dates empty for the whole archive.</div>
-      </form>
+      </form>{% endif %}
     </div>
 
     <div class="d-flex flex-wrap align-items-end gap-3 mb-2">

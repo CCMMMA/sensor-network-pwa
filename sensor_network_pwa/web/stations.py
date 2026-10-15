@@ -45,6 +45,7 @@ from sensor_network_pwa.web.access import (
     redirect_to_login,
     station_is_accessible,
     station_is_controllable,
+    station_is_downloadable,
     station_logo_dir,
     storage_root_or_404,
 )
@@ -263,6 +264,11 @@ def load_station_window(instrument_uuid: str):
 
 @bp.route("/station/<path:instrument_uuid>/export.csv")
 def export_station_csv(instrument_uuid: str):
+    user = current_user()
+    if not station_is_downloadable(user, instrument_uuid):
+        if user is None:
+            return redirect_to_login("Please log in to download data from this station.")
+        abort(403)
     window = load_station_window(instrument_uuid)
     if not isinstance(window, StationWindow):
         return window
@@ -304,6 +310,7 @@ def browse_station(instrument_uuid: str):
         station_name=window.preview.get("name") or instrument_uuid,
         user=window.user,
         can_control=station_is_controllable(window.user, instrument_uuid),
+        can_download=station_is_downloadable(window.user, instrument_uuid),
         app_logo_url=logo_url(app_logo_path()),
         station_logo_url=station_logo_url,
         interval=window.interval,
@@ -384,7 +391,7 @@ def download():
     if unknown:
         abort(404, f"Unknown station(s): {', '.join(unknown)}")
 
-    unauthorized = [inst for inst in requested if not station_is_accessible(user, inst)]
+    unauthorized = [inst for inst in requested if not station_is_downloadable(user, inst)]
     if unauthorized:
         abort(403, f"Access denied for station(s): {', '.join(unauthorized)}")
 

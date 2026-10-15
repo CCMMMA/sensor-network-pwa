@@ -21,6 +21,7 @@ from sensor_network_pwa.runtime import runtime
 from sensor_network_pwa.storage import iter_csv_files_newest_first, iter_csv_rows, load_station_rows, to_float
 from sensor_network_pwa.watchdog import run_watchdog_scan
 from sensor_network_pwa.web import create_web_app, stations
+from sensor_network_pwa.workflows import run_workflows
 
 STRONG = "Str0ng!Passw0rd"
 XSS_FIELD = "</script><script>alert(1)</script>"
@@ -76,6 +77,10 @@ class WebAndAuthTests(unittest.TestCase):
             if is_new:
                 writer.writeheader()
             writer.writerow(row)
+        # Most tests exercise station features as bob. Grant fixture access
+        # explicitly now that regular accounts default to no stations.
+        if hasattr(self, "store") and self.store.get_user("bob"):
+            self.store.set_user_instrument_access("bob", instrument_uuid, True)
 
     def client(self, username=None):
         client = self.app.test_client()
@@ -375,6 +380,19 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertNotIn(name, body)
         self.assertNotIn(self.cfg["storage_root"], body)
 
+    def test_home_map_uses_policy_compliant_configurable_tiles(self):
+        response = self.client().get("/")
+        self.assertEqual(response.headers["Referrer-Policy"], "strict-origin-when-cross-origin")
+        body = response.get_data(as_text=True)
+        island = body.split('<script id="pageConfig" type="application/json">')[1].split("</script>")[0]
+        page_config = json.loads(island)
+        self.assertEqual(page_config["mapTileUrl"], "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
+        script_response = self.client().get("/static/js/index.js")
+        script = script_response.get_data(as_text=True)
+        script_response.close()
+        self.assertIn("pageConfig.mapTileUrl", script)
+        self.assertNotIn("{s}.tile.openstreetmap.org", script)
+
     def test_sample_session_secret_is_replaced_by_stored_secret(self):
         cfg = dict(self.cfg, web_session_secret="replace-with-a-strong-random-secret")
         with self.assertLogs(logger, level="WARNING"):
@@ -401,6 +419,7 @@ class WebAndAuthTests(unittest.TestCase):
 
     def test_restricted_station_is_hidden_from_public_views(self):
         self.store.set_policy("station", "restricted", "admin")
+        self.store.set_user_instrument_access("bob", "station", False)
         anonymous = self.client()
         self.assertNotIn("/public/station/station", anonymous.get("/").get_data(as_text=True))
         response = anonymous.get("/public/station/station")
@@ -513,7 +532,7 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertTrue(all("." in endpoint for endpoint in endpoints), endpoints)
         self.assertEqual(
             {endpoint.split(".")[0] for endpoint in endpoints},
-            {"pwa", "public", "stations", "auth", "admin", "profile"},
+            {"pwa", "public", "stations", "auth", "admin", "profile", "api"},
         )
         # A second application in the same process keeps its own configuration.
         other = create_web_app(dict(self.cfg, web_app_name="Other portal"), self.store)
@@ -620,6 +639,8 @@ class WebAndAuthTests(unittest.TestCase):
         )
         self.assertEqual(response.headers["Location"], "/admin#users")
         self.assertEqual(self.store.get_user("erin")["force_password_change"], 1)
+        self.assertEqual(self.store.get_user_instruments("erin"), [])
+        self.assertEqual(self.store.get_user_download_stations("erin"), [])
         self.assertIn("User erin created", admin.get("/admin").get_data(as_text=True))
         admin.post("/admin/create-user", data={"username": "weak", "password": "short"})
         self.assertIsNone(self.store.get_user("weak"))
@@ -628,23 +649,37 @@ class WebAndAuthTests(unittest.TestCase):
         self.store.set_policy("station", "restricted", "admin")
         admin.post(
             "/admin/user-permissions",
-            data={"username": "bob", "station": ["station", "ghost"], "access": ["station"], "control": ["station"]},
+            data={
+                "username": "bob",
+                "station": ["station", "ghost"],
+                "browse": ["station"],
+                "download": ["ghost"],
+                "control": ["station"],
+            },
         )
-        self.assertEqual(self.store.get_user_instruments("bob"), ["station"])
+        self.assertEqual(self.store.get_user_instruments("bob"), ["ghost", "station"])
+        self.assertEqual(self.store.get_user_download_stations("bob"), ["ghost"])
         self.assertEqual(self.store.get_user_control_stations("bob"), ["station"])
         # Only the listed stations are touched, and unticked rights are removed.
         self.store.set_user_instrument_access("bob", "elsewhere", True)
         admin.post("/admin/user-permissions", data={"username": "bob", "station": ["station"]})
-        self.assertEqual(self.store.get_user_instruments("bob"), ["elsewhere"])
+        self.assertEqual(self.store.get_user_instruments("bob"), ["elsewhere", "ghost"])
         self.assertEqual(self.store.get_user_control_stations("bob"), [])
 
         admin.post(
             "/admin/station-permissions",
-            data={"station_uuid": "station", "user": ["bob", "erin", "nobody"], "access": ["erin"], "control": ["bob"]},
+            data={
+                "station_uuid": "station",
+                "user": ["bob", "erin", "nobody"],
+                "browse": ["erin"],
+                "download": ["bob"],
+                "control": ["bob"],
+            },
         )
         self.assertEqual(self.store.get_user_instruments("erin"), ["station"])
+        self.assertIn("station", self.store.get_user_download_stations("bob"))
         self.assertEqual(self.store.get_user_control_stations("bob"), ["station"])
-        self.assertNotIn("station", self.store.get_user_instruments("bob"))
+        self.assertIn("station", self.store.get_user_instruments("bob"))
         self.assertEqual(
             self.client("bob").post("/admin/station-permissions", data={"station_uuid": "x"}).status_code, 403
         )
@@ -802,8 +837,95 @@ class WebAndAuthTests(unittest.TestCase):
             404,
         )
         self.store.set_policy("csvst", "restricted", "admin")
+        self.store.set_user_instrument_permission("bob", "csvst", "can_download", False)
         self.assertEqual(client.get("/station/csvst/export.csv").status_code, 403)
         self.assertEqual(self.client().get("/station/csvst/export.csv").status_code, 302)
+
+    def test_browse_and_download_permissions_are_enforced_separately(self):
+        self.assertEqual(self.store.create_user("reader", STRONG, "reader@example.org"), (True, "User created"))
+        reader = self.client("reader")
+        self.assertEqual(reader.get("/station/station").status_code, 403)
+        self.assertEqual(reader.get("/station/station/export.csv").status_code, 403)
+
+        self.store.set_user_instrument_permission("reader", "station", "can_browse", True)
+        page = reader.get("/station/station")
+        self.assertEqual(page.status_code, 200)
+        self.assertNotIn(b"Download this range (CSV)", page.data)
+        self.assertEqual(reader.get("/station/station/export.csv").status_code, 403)
+
+        self.store.set_user_instrument_permission("reader", "station", "can_download", True)
+        self.assertIn(b"Download this range (CSV)", reader.get("/station/station").data)
+        self.assertEqual(reader.get("/station/station/export.csv").status_code, 200)
+
+    def test_data_api_requires_can_api_and_preserves_station_permissions(self):
+        client = self.client("bob")
+        self.assertEqual(self.app.test_client().get("/api/query?station=station").status_code, 401)
+        self.assertEqual(client.get("/api/query?station=station").status_code, 403)
+        self.assertEqual(self.store.set_can_api("bob", True), (True, "API permission updated"))
+        response = client.get("/api/query", query_string={"station": "station", "fields": "TempOut", "limit": 1})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["stations"][0]["rows"][0]["TempOut"], "20")
+        download = client.get("/api/download?station=station")
+        self.assertEqual(download.status_code, 200)
+        download.close()
+
+        self.store.set_policy("station", "restricted", "admin")
+        self.store.set_user_instrument_permission("bob", "station", "can_browse", False)
+        self.store.set_user_instrument_permission("bob", "station", "can_download", False)
+        self.assertEqual(client.get("/api/query?station=station").status_code, 403)
+        self.assertEqual(client.get("/api/download?station=station").status_code, 403)
+
+    def test_workflow_crud_and_email_fires_only_on_condition_transition(self):
+        self.store.set_can_api("bob", True)
+        client = self.client("bob")
+        graph = {
+            "nodes": [
+                {"id": "source", "type": "station", "x": 10, "y": 10, "data": {"station": "station"}},
+                {
+                    "id": "threshold",
+                    "type": "condition",
+                    "x": 220,
+                    "y": 10,
+                    "data": {"field": "TempOut", "operator": ">", "value": 19},
+                },
+                {
+                    "id": "mail",
+                    "type": "email",
+                    "x": 430,
+                    "y": 10,
+                    "data": {"recipient": "alerts@example.org"},
+                },
+            ],
+            "edges": [
+                {"source": "source", "target": "threshold"},
+                {"source": "threshold", "target": "mail"},
+            ],
+        }
+        response = client.post("/api/workflows", json={"name": "Hot station", "graph": graph, "enabled": True})
+        self.assertEqual(response.status_code, 201)
+        workflow_id = response.json["id"]
+        self.assertEqual(len(client.get("/api/workflows").json["workflows"]), 1)
+        sent = []
+        cfg = dict(self.cfg, smtp_enabled=True, smtp_host="smtp.example.org")
+        with patch("sensor_network_pwa.workflows.send_email", side_effect=lambda *args: sent.append(args) or True):
+            run_workflows(cfg, self.store, self.cfg["storage_root"], self.now)
+            run_workflows(cfg, self.store, self.cfg["storage_root"], self.now + timedelta(minutes=1))
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0][1], ["alerts@example.org"])
+        self.assertEqual(client.delete(f"/api/workflows/{workflow_id}").status_code, 204)
+
+    def test_workflow_rejects_unreadable_station_and_invalid_email(self):
+        self.store.set_can_api("bob", True)
+        graph = {
+            "nodes": [
+                {"id": "s", "type": "station", "data": {"station": "missing"}},
+                {"id": "c", "type": "condition", "data": {"field": "RainRate", "operator": ">", "value": 300}},
+                {"id": "e", "type": "email", "data": {"recipient": "not-an-email"}},
+            ],
+            "edges": [{"source": "s", "target": "c"}, {"source": "c", "target": "e"}],
+        }
+        response = self.client("bob").post("/api/workflows", json={"name": "Bad", "graph": graph})
+        self.assertEqual(response.status_code, 400)
 
     def test_config_needs_no_collector_settings(self):
         self.assertFalse(self.cfg["enable_influx"])

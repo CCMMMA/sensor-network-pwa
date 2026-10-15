@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS users (
     role TEXT NOT NULL DEFAULT 'user',
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
-    force_password_change INTEGER NOT NULL DEFAULT 0
+    force_password_change INTEGER NOT NULL DEFAULT 0,
+    can_api INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS account_requests (
@@ -32,6 +33,8 @@ CREATE TABLE IF NOT EXISTS instrument_policies (
 CREATE TABLE IF NOT EXISTS user_instruments (
     username TEXT NOT NULL,
     instrument_uuid TEXT NOT NULL,
+    can_browse INTEGER NOT NULL DEFAULT 1,
+    can_download INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (username, instrument_uuid)
 );
 
@@ -122,6 +125,26 @@ CREATE TABLE IF NOT EXISTS app_settings (
     value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS workflows (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    graph_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_run_at TEXT,
+    last_error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS workflow_state (
+    workflow_id INTEGER NOT NULL,
+    node_id TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 0,
+    last_fired_at TEXT,
+    PRIMARY KEY (workflow_id, node_id)
+);
+
 CREATE TABLE IF NOT EXISTS write_probe (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL
@@ -134,4 +157,9 @@ MIGRATIONS = (
     "ALTER TABLE account_requests ADD COLUMN reviewed_at TEXT",
     # NULL means DEFAULT_NOTIFICATION_INTERVAL_MIN.
     "ALTER TABLE users ADD COLUMN notify_interval_min INTEGER",
+    # Existing combined assignments retain both permissions; new assignments
+    # explicitly set each flag.
+    "ALTER TABLE user_instruments ADD COLUMN can_browse INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE user_instruments ADD COLUMN can_download INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE users ADD COLUMN can_api INTEGER NOT NULL DEFAULT 0",
 )

@@ -3,9 +3,9 @@ const stations = pageConfig.stations;
 const mapEl = document.getElementById('map');
 if (stations.length > 0 && mapEl && window.L) {
   const map = L.map(mapEl).setView([Number(pageConfig.center.lat), Number(pageConfig.center.lon)], Number(pageConfig.center.zoom));
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  L.tileLayer(pageConfig.mapTileUrl, {
     maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    attribution: pageConfig.mapTileAttribution
   }).addTo(map);
   L.control.scale({ imperial: false }).addTo(map);
 

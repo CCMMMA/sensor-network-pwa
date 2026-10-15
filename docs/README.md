@@ -1,10 +1,10 @@
 # Documentation
 
 - [Configuration](configuration.md): storage location, web access, InfluxDB reads, email, and watchdog settings.
-- [Web GUI and policies](webgui.md): accounts, access rights, dashboards, and charts.
+- [Web GUI, API, workflows, and policies](webgui.md): accounts, access rights, dashboards, data API, and workflow editor.
 - [Production WSGI](wsgi.md): Gunicorn, reverse proxy, and deployment troubleshooting.
 - [Docker deployment](docker.md): web and watchdog services sharing the collector's data volume.
-- [Operations](operations.md): process roles, runtime verification, backups, and failure diagnosis.
+- [Operations](operations.md): process roles, workflow/watchdog verification, backups, and failure diagnosis.
 - [Development and validation](development.md): local setup, tests, and change workflow.
 - [Migration](migration.md): replacing the web GUI that used to be part of `sensor-network-collector`.
 - [CI/CD](ci-cd.md): checks and GHCR images.

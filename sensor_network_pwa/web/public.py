@@ -21,6 +21,7 @@ from sensor_network_pwa.web.access import (
     send_image_asset,
     station_is_accessible,
     station_is_controllable,
+    station_is_downloadable,
     station_is_public,
     station_logo_dir,
     storage_root_or_404,
@@ -49,14 +50,16 @@ def asset_file(kind: str, name: str):
 @bp.route("/")
 def index():
     user = current_user()
-    storage_root: str = get_cfg().get("storage_root") or ""
+    cfg = get_cfg()
+    storage_root: str = cfg.get("storage_root") or ""
     instruments = available_instruments(storage_root) if storage_root else []
     policies = get_store().list_policies(instruments)
 
     stations = []
     for inst in instruments:
-        can_access = station_is_accessible(user, inst)
-        if policies.get(inst) == "restricted" and not can_access:
+        can_browse = station_is_accessible(user, inst)
+        can_download = station_is_downloadable(user, inst)
+        if policies.get(inst) == "restricted" and not (can_browse or can_download):
             continue
         preview = get_station_preview(storage_root, inst)
         stations.append(
@@ -64,7 +67,8 @@ def index():
                 "uuid": inst,
                 "name": preview["name"],
                 "policy": policies.get(inst, "account"),
-                "can_access": can_access,
+                "can_access": can_browse,
+                "can_download": can_download,
                 "latitude": preview["latitude"],
                 "longitude": preview["longitude"],
                 "last_timestamp": preview["last_timestamp"],
@@ -91,8 +95,10 @@ def index():
         clickable=clickable,
         center=center,
         app_logo_url=logo_url(app_logo_path()),
-        web_app_link=get_cfg().get("web_app_link"),
-        web_info_link=get_cfg().get("web_info_link"),
+        web_app_link=cfg.get("web_app_link"),
+        web_info_link=cfg.get("web_info_link"),
+        map_tile_url=cfg["map_tile_url"],
+        map_tile_attribution=cfg["map_tile_attribution"],
     )
 
 
@@ -108,7 +114,8 @@ def station(instrument_uuid: str):
         if user is None:
             return redirect_to_login("Please log in to view this station.")
         abort(404, "Station not found")
-    can_browse_download = bool(user) and station_is_accessible(user, instrument_uuid)
+    can_browse = station_is_accessible(user, instrument_uuid)
+    can_download = station_is_downloadable(user, instrument_uuid)
     can_control = bool(user) and station_is_controllable(user, instrument_uuid)
     selected_window = request_preference_cookie(
         request, "window", "public_trend_window", normalize_public_window, "hour"
@@ -128,7 +135,8 @@ def station(instrument_uuid: str):
     return render_template(
         "public/public_station.html",
         snapshot=snapshot,
-        can_browse_download=can_browse_download,
+        can_browse=can_browse,
+        can_download=can_download,
         can_control=can_control,
         app_logo_url=logo_url(app_logo_path()),
         station_logo_url=station_logo_url,

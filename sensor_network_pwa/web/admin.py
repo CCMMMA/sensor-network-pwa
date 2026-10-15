@@ -29,11 +29,13 @@ def index():
     policies = get_store().list_policies(instruments)
     users = get_store().list_users()
     pending_requests = get_store().list_account_requests(status="pending")
-    all_access = get_store().list_all_user_instruments()
+    all_browse = get_store().list_all_user_instruments()
+    all_download = get_store().list_all_user_download_stations()
     all_controls = get_store().list_all_user_station_controls()
 
     for u in users:
-        u["access"] = set(all_access.get(u["username"], []))
+        u["browse"] = set(all_browse.get(u["username"], []))
+        u["download"] = set(all_download.get(u["username"], []))
         u["controls"] = set(all_controls.get(u["username"], []))
     regular_users = [u for u in users if u["role"] != "admin"]
 
@@ -46,7 +48,8 @@ def index():
                 "name": preview["name"],
                 "last_timestamp": preview["last_timestamp"],
                 "policy": policies.get(inst, "account"),
-                "access_count": sum(1 for u in regular_users if inst in u["access"]),
+                "browse_count": sum(1 for u in regular_users if inst in u["browse"]),
+                "download_count": sum(1 for u in regular_users if inst in u["download"]),
                 "control_count": sum(1 for u in regular_users if inst in u["controls"]),
             }
         )
@@ -226,9 +229,19 @@ def set_user_permissions():
     ok, msg = get_store().replace_user_permissions(
         request.form.get("username", ""),
         request.form.getlist("station"),
-        request.form.getlist("access"),
+        request.form.getlist("browse"),
+        request.form.getlist("download"),
         request.form.getlist("control"),
     )
+    return admin_done("users", ok, msg)
+
+
+@bp.route("/admin/user-api", methods=["POST"])
+@admin_required
+def set_user_api():
+    username = request.form.get("username", "")
+    allow = parse_boolish(request.form.get("allow", "0"), False)
+    ok, msg = get_store().set_can_api(username, allow)
     return admin_done("users", ok, msg)
 
 
@@ -238,7 +251,8 @@ def set_station_permissions():
     ok, msg = get_store().replace_station_permissions(
         request.form.get("station_uuid", ""),
         request.form.getlist("user"),
-        request.form.getlist("access"),
+        request.form.getlist("browse"),
+        request.form.getlist("download"),
         request.form.getlist("control"),
     )
     return admin_done("stations", ok, msg)

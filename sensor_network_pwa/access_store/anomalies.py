@@ -90,9 +90,8 @@ class AnomaliesMixin(StoreBase):
                 SELECT a.id,a.station_uuid,a.anomaly_type,a.message,a.severity,a.status,
                        a.created_at,a.updated_at,a.resolved_at
                 FROM anomalies a
-                LEFT JOIN instrument_policies p ON p.instrument_uuid = a.station_uuid
-                LEFT JOIN user_instruments ui ON ui.instrument_uuid = a.station_uuid AND ui.username = ?
-                WHERE COALESCE(p.policy, 'account') <> 'restricted' OR ui.username IS NOT NULL
+                JOIN user_instruments ui ON ui.instrument_uuid = a.station_uuid AND ui.username = ?
+                WHERE ui.can_browse = 1 OR ui.can_download = 1
                 ORDER BY a.updated_at DESC
                 LIMIT 1000
                 """,

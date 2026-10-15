@@ -9,6 +9,7 @@ from sensor_network_pwa.log import logger
 from sensor_network_pwa.mailer import compose_external_url, send_email
 from sensor_network_pwa.storage import collect_instruments, load_station_rows
 from sensor_network_pwa.timeutil import parse_iso_ts, utc_now
+from sensor_network_pwa.workflows import run_workflows
 
 
 def run_watchdog_loop(cfg: dict, access_store: AccessStore, stop_event: threading.Event):
@@ -173,3 +174,4 @@ def run_watchdog_scan(cfg: dict, access_store: AccessStore, storage_root: str, n
             logger.exception("Watchdog check failed for station=%s", instrument_uuid)
 
     send_watchdog_notifications(cfg, access_store, failing, now)
+    run_workflows(cfg, access_store, storage_root, now)

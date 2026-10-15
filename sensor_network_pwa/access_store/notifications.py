@@ -34,24 +34,21 @@ def normalize_notification_interval(value):
 
 class NotificationsMixin(PermissionsMixin):
     def list_station_notification_users(self, station_uuid: str):
-        """Active users notified about a station: admins, plus the users its policy admits."""
+        """Active users notified about a station: admins and assigned browsers."""
         station_uuid = station_uuid.strip()
         policy = self.get_policy(station_uuid)
         with self._connect() as con:
             rows = con.execute(
                 "SELECT username,email,notify_interval_min FROM users WHERE role = 'admin' AND active = 1"
             ).fetchall()
-            if policy == "account":
-                rows += con.execute(
-                    "SELECT username,email,notify_interval_min FROM users WHERE role = 'user' AND active = 1"
-                ).fetchall()
-            elif policy == "restricted":
+            if policy in ("account", "restricted"):
                 rows += con.execute(
                     """
                     SELECT u.username,u.email,u.notify_interval_min
                     FROM users u
                     JOIN user_instruments ui ON ui.username = u.username
-                    WHERE ui.instrument_uuid = ? AND u.active = 1
+                    WHERE ui.instrument_uuid = ? AND (ui.can_browse = 1 OR ui.can_download = 1)
+                      AND u.active = 1
                     """,
                     (station_uuid,),
                 ).fetchall()

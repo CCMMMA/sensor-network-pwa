@@ -46,8 +46,9 @@ are ignored, so a configuration file shared with the collector works unchanged.
   its host is also accepted as a valid origin for form submissions. Defaults to
   `http://<httpHost>:<httpPort>`
 - `authDbPath`: SQLite file for users, account requests, station policies and
-  assignments, chart-control rights, chart axis settings, anomaly log and silence
-  windows, station logos. Defaults to `<pathStorage>/collector_auth.sqlite`
+  assignments, API permission, workflows and firing state, chart-control rights,
+  chart axis settings, anomaly log and silence windows, station logos. Defaults to
+  `<pathStorage>/collector_auth.sqlite`
 - `webSessionSecret`: strong random secret used to sign session cookies. When it is
   empty or still a documented sample value (`replace-with-...`), the application
   generates a random secret once, stores it in the auth database, and logs a warning;
@@ -62,6 +63,12 @@ are ignored, so a configuration file shared with the collector works unchanged.
 - `webAppLogo`: optional absolute path to the app logo image
 - `webAppLink`: optional external URL opened when the home-page logo is clicked
 - `webInfoLink`: optional external URL shown as `Info` before `Login` on the home page
+- `mapTileUrl` (`MAP_TILE_URL`): Leaflet tile URL for the home-page map. Defaults to
+  OpenStreetMap's canonical `https://tile.openstreetmap.org/{z}/{x}/{y}.png`; do not
+  restore the obsolete `{s}.tile.openstreetmap.org` form. For a public production
+  portal, configure a provider whose capacity and terms fit the expected traffic.
+- `mapTileAttribution` (`MAP_TILE_ATTRIBUTION`): attribution displayed on the map.
+  It must satisfy the selected provider's licence and usage terms.
 
 ### SMTP and notifications
 
@@ -77,7 +84,8 @@ Behavior:
 - if `smtpPort`, `smtpUser`, and `smtpPass` are omitted, SMTP defaults to unauthenticated port `25`
 - if `smtpUser` is set, SMTP login is attempted
 - `smtpUseTls` can explicitly force TLS behavior; the default follows the port/auth fallback
-- onboarding, forgot-password, and alarm emails need both SMTP configuration and a correct `baseUrl`
+- onboarding, forgot-password, alarm, and workflow emails need SMTP configuration;
+  emails containing application links also need a correct `baseUrl`
 
 ```json
 {
@@ -91,16 +99,19 @@ Behavior:
 }
 ```
 
-### Watchdog
+### Watchdog and workflows
 
-- `watchdogIntervalSec`: scan period for anomaly detection (minimum 10, default 60)
+- `watchdogIntervalSec`: scan period for anomaly detection and enabled workflow
+  evaluation (minimum 10, default 60)
 
 The scan period is not the email period: emails are sent on status changes and at each
 user's notification time (default 60 minutes, set on `/profile`). See
 [Failure notifications](webgui.md#failure-notifications).
 
-The watchdog runs inside `python main.py`, or alone with `--watchdog-only`. Gunicorn
-workers do not run it.
+The same scan evaluates enabled workflows against each referenced station's newest
+stored row. A condition action fires on a false-to-true transition. The watchdog runs
+inside `python main.py`, or alone with `--watchdog-only`; Gunicorn workers do not run
+it. Run exactly one watchdog process.
 
 ## WSGI
 

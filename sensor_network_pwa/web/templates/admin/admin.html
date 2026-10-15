@@ -118,7 +118,8 @@
             <td class="small">
               {% if u.role == 'admin' %}All stations
               {% else %}
-                Data on {{ u.access|length }} restricted · Charts on {{ u.controls|length }}
+                Browse {{ u.browse|length }} · Download {{ u.download|length }} · Charts {{ u.controls|length }}
+                · API {{ 'yes' if u.can_api else 'no' }}
               {% endif %}
             </td>
             <td class="text-end">
@@ -141,7 +142,8 @@
                         <table class="table table-sm rights-table bg-white border">
                           <thead><tr>
                             <th>Station</th>
-                            <th class="text-center" title="Browse and download the station data">Data access</th>
+                            <th class="text-center" title="View historical station data">Browse</th>
+                            <th class="text-center" title="Export a selected interval and columns as CSV">Download CSV</th>
                             <th class="text-center" title="Edit the trend-chart axis settings of the public dashboard">Chart settings</th>
                           </tr></thead>
                           <tbody>
@@ -152,14 +154,8 @@
                                 {{ st.name }}
                                 {% if st.name != st.uuid %}<div class="uuid text-muted">{{ st.uuid }}</div>{% endif %}
                               </td>
-                              <td class="text-center">
-                                {% if st.policy == 'restricted' %}
-                                  <input class="form-check-input" type="checkbox" name="access" value="{{ st.uuid }}" aria-label="Data access to {{ st.name }}" {% if st.uuid in u.access %}checked{% endif %}>
-                                {% else %}
-                                  {% if st.uuid in u.access %}<input type="hidden" name="access" value="{{ st.uuid }}">{% endif %}
-                                  <span class="badge text-bg-light border" title="The station policy already lets this user in">Yes, by policy</span>
-                                {% endif %}
-                              </td>
+                              <td class="text-center"><input class="form-check-input" type="checkbox" name="browse" value="{{ st.uuid }}" aria-label="Browse {{ st.name }}" {% if st.uuid in u.browse %}checked{% endif %}></td>
+                              <td class="text-center"><input class="form-check-input" type="checkbox" name="download" value="{{ st.uuid }}" aria-label="Download CSV from {{ st.name }}" {% if st.uuid in u.download %}checked{% endif %}></td>
                               <td class="text-center">
                                 <input class="form-check-input" type="checkbox" name="control" value="{{ st.uuid }}" aria-label="Chart settings of {{ st.name }}" {% if st.uuid in u.controls %}checked{% endif %}>
                               </td>
@@ -168,12 +164,22 @@
                           </tbody>
                         </table>
                         <button class="btn btn-primary btn-sm" type="submit">Save station rights</button>
-                        <span class="form-text ms-2">Data access is chosen here only for stations with the Restricted policy.</span>
+                        <span class="form-text ms-2">New regular users start with no station rights. Download permission also allows the user to browse the interval being exported.</span>
                       </form>
                     {% endif %}
                   </div>
                   <div class="col-lg-5">
                     <h3 class="h6">Account</h3>
+                    {% if u.role != 'admin' %}
+                    <form method="post" action="{{ url_for('admin.set_user_api') }}" class="card card-body p-2 mb-2">
+                      <input type="hidden" name="username" value="{{ u.username }}">
+                      <input type="hidden" name="allow" value="{{ 0 if u.can_api else 1 }}">
+                      <div class="d-flex justify-content-between align-items-center gap-2">
+                        <div><b>Can API</b><div class="form-text">Use data API endpoints and create workflows.</div></div>
+                        <button class="btn btn-sm {{ 'btn-outline-danger' if u.can_api else 'btn-outline-success' }}" type="submit">{{ 'Revoke' if u.can_api else 'Grant' }}</button>
+                      </div>
+                    </form>
+                    {% endif %}
                     <form method="post" action="{{ url_for('admin.update_user') }}" class="input-group input-group-sm mb-2">
                       <input type="hidden" name="username" value="{{ u.username }}">
                       <input type="hidden" name="action" value="email">
@@ -249,10 +255,10 @@
     {# ------------------------------ Stations ------------------------------ #}
     <div class="tab-pane fade" id="stations" role="tabpanel">
       <div class="alert alert-light border small">
-        <b>Who can browse and download a station's data:</b>
+        <b>Station visibility policy:</b>
         <span class="badge text-bg-success">Open</span> everyone, without login ·
-        <span class="badge text-bg-primary">Account</span> every logged-in user ·
-        <span class="badge text-bg-dark">Restricted</span> only the users you select; the station is also hidden from everyone else.
+        <span class="badge text-bg-primary">Account</span> dashboard visible, data rights assigned per user ·
+        <span class="badge text-bg-dark">Restricted</span> hidden except from assigned users. Browse and CSV download rights are always selected separately below.
       </div>
       {% if not stations %}
         <p class="text-muted mb-0">No stations found in storage.</p>
@@ -280,7 +286,7 @@
               </form>
             </td>
             <td class="small">
-              {% if st.policy == 'restricted' %}{{ st.access_count }} with data access{% else %}All by policy{% endif %}
+              {{ st.browse_count }} browse · {{ st.download_count }} download
               · {{ st.control_count }} chart editor{{ '' if st.control_count == 1 else 's' }}
             </td>
             <td class="text-end text-nowrap">
@@ -303,7 +309,8 @@
                       <table class="table table-sm rights-table bg-white border">
                         <thead><tr>
                           <th>User</th>
-                          <th class="text-center">Data access</th>
+                          <th class="text-center">Browse</th>
+                          <th class="text-center">Download CSV</th>
                           <th class="text-center">Chart settings</th>
                         </tr></thead>
                         <tbody>
@@ -315,14 +322,8 @@
                               {% if not u.active %}<span class="badge text-bg-danger">Disabled</span>{% endif %}
                               <div class="small text-muted">{{ u.email or 'no email' }}</div>
                             </td>
-                            <td class="text-center">
-                              {% if st.policy == 'restricted' %}
-                                <input class="form-check-input" type="checkbox" name="access" value="{{ u.username }}" aria-label="Data access for {{ u.username }}" {% if st.uuid in u.access %}checked{% endif %}>
-                              {% else %}
-                                {% if st.uuid in u.access %}<input type="hidden" name="access" value="{{ u.username }}">{% endif %}
-                                <span class="badge text-bg-light border">Yes, by policy</span>
-                              {% endif %}
-                            </td>
+                            <td class="text-center"><input class="form-check-input" type="checkbox" name="browse" value="{{ u.username }}" aria-label="Browse for {{ u.username }}" {% if st.uuid in u.browse %}checked{% endif %}></td>
+                            <td class="text-center"><input class="form-check-input" type="checkbox" name="download" value="{{ u.username }}" aria-label="Download CSV for {{ u.username }}" {% if st.uuid in u.download %}checked{% endif %}></td>
                             <td class="text-center">
                               <input class="form-check-input" type="checkbox" name="control" value="{{ u.username }}" aria-label="Chart settings for {{ u.username }}" {% if st.uuid in u.controls %}checked{% endif %}>
                             </td>
@@ -331,9 +332,7 @@
                         </tbody>
                       </table>
                       <button class="btn btn-primary btn-sm" type="submit">Save users</button>
-                      {% if st.policy != 'restricted' %}
-                        <span class="form-text ms-2">Set the policy to Restricted to choose who has data access.</span>
-                      {% endif %}
+                      <span class="form-text ms-2">Download permission also permits browsing the exported interval.</span>
                     </form>
                   {% endif %}
                 </div>

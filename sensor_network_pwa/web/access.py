@@ -98,13 +98,18 @@ def available_instruments(storage_root: str):
 
 
 def station_is_accessible(user, instrument_uuid: str):
+    """Backward-compatible name for station browsing permission."""
+    return get_store().can_browse(user, instrument_uuid)
+
+
+def station_is_downloadable(user, instrument_uuid: str):
     return get_store().can_download(user, instrument_uuid)
 
 
 def station_is_public(user, instrument_uuid: str):
     # Restricted stations are shown only to the users assigned to them.
     store = get_store()
-    return store.get_policy(instrument_uuid) != "restricted" or store.can_download(user, instrument_uuid)
+    return store.get_policy(instrument_uuid) != "restricted" or store.can_browse(user, instrument_uuid)
 
 
 def station_is_controllable(user, instrument_uuid: str):

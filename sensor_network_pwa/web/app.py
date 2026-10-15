@@ -6,10 +6,10 @@ from sensor_network_pwa.access_store import AccessStore
 from sensor_network_pwa.config import PLACEHOLDER_SESSION_SECRETS
 from sensor_network_pwa.log import logger
 from sensor_network_pwa.runtime import runtime
-from sensor_network_pwa.web import admin, auth, hooks, profile, public, pwa, stations
+from sensor_network_pwa.web import admin, api, auth, hooks, profile, public, pwa, stations
 from sensor_network_pwa.web.access import CONFIG_KEY, STORE_EXTENSION
 
-BLUEPRINTS = (pwa.bp, public.bp, stations.bp, auth.bp, admin.bp, profile.bp)
+BLUEPRINTS = (pwa.bp, public.bp, stations.bp, auth.bp, admin.bp, profile.bp, api.bp)
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
