@@ -60,6 +60,18 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     used_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    token_prefix TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_used_at TEXT,
+    expires_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS account_request_tokens (
     token TEXT PRIMARY KEY,
     request_id INTEGER NOT NULL,

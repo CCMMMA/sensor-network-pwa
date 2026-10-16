@@ -55,7 +55,7 @@
 - Page behaviour goes in `web/static/js/<page>.js`, never in an inline `<script>`. Static files are not templates: pass server values through `<script id="pageConfig" type="application/json">{{ {...} | tojson }}</script>` and read them with `JSON.parse`.
 - The service worker must never cache pages or `/api/` responses; bump the `CACHE` name in `web/templates/pwa/service-worker.js` when its cached assets change.
 - A station's public dashboard and home-page entry must go through `station_is_public`.
-- Tokens are single use: claim them with an `UPDATE ... WHERE used_at IS NULL` inside the store lock.
+- Login, reset, and onboarding tokens are single use: claim them with an `UPDATE ... WHERE used_at IS NULL` inside the store lock. API-token secrets are long-lived credentials and must be stored only as hashes.
 
 ## Validation
 - For each change, at minimum:

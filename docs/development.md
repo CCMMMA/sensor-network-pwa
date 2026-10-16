@@ -41,7 +41,7 @@ of hourly files, the unchanged-poll shortcut, response compression, chart thinni
 dashboard cards for interleaved device rows, the administration page actions, station page ranges, paging and CSV export, and the
 progressive web app assets (doctype, manifest, icons, service worker), and the static scripts and
 stylesheets of the pages (served, compressed, free of inline code and template syntax).
-It also covers `Can API`, query/download authorization, workflow CRUD and validation,
+It also covers `Can API`, API-token CRUD and Bearer authentication, query/download authorization, workflow CRUD and validation,
 station isolation, and edge-triggered workflow email execution.
 
 The workflow editor JavaScript can be syntax-checked separately when Node.js is
@@ -49,6 +49,7 @@ available:
 
 ```bash
 node --check sensor_network_pwa/web/static/js/workflows.js
+node --check sensor_network_pwa/web/static/js/api_tokens.js
 ```
 
 ## Container checks

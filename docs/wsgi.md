@@ -383,6 +383,6 @@ docker compose restart watchdog
 - Verify login/session persistence across restarts
 - Verify anomalies page and admin dashboard load
 - Verify an administrator can grant `Can API`, and that an API-enabled user can open
-  `/workflows` and query only permitted stations
+  `/api-tokens` and `/workflows`, create a Bearer token, and query only permitted stations
 - Verify fast-login links in email use correct host (`baseUrl`)
 - Verify forgot-password emails generate reset links with the same public host

@@ -46,7 +46,7 @@ are ignored, so a configuration file shared with the collector works unchanged.
   its host is also accepted as a valid origin for form submissions. Defaults to
   `http://<httpHost>:<httpPort>`
 - `authDbPath`: SQLite file for users, account requests, station policies and
-  assignments, API permission, workflows and firing state, chart-control rights,
+  assignments, API permission and hashed API tokens, workflows and firing state, chart-control rights,
   chart axis settings, anomaly log and silence windows, station logos. Defaults to
   `<pathStorage>/collector_auth.sqlite`
 - `webSessionSecret`: strong random secret used to sign session cookies. When it is

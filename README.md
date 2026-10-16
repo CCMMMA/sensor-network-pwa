@@ -15,7 +15,7 @@ project only reads that data and serves it. It never connects to MQTT.
 - Live station trend pages and a public sensor network dashboard, reading only the hourly files a view needs
 - Public station dashboard with per-station trend-chart axis settings (JSON export/import)
 - Per-user, per-station Browse and CSV/ZIP Download permissions; new users start with no station assignments
-- Session-authenticated query/download API and Node-RED-style email workflows, gated by a separate `Can API` permission
+- Session- or bearer-authenticated query/download API, user-managed API tokens, and Node-RED-style email workflows with editable connections and SVG/PNG/JPG export, gated by a separate `Can API` permission
 - Accounts: admin approval of requests, forced/self-service password change, reset by email
 - Administration page with per-user and per-station rights tables, roles, and account enable/disable
 - Watchdog anomaly detection and workflow evaluation, with persisted state and email notifications
@@ -151,9 +151,11 @@ python3 -m unittest discover -s tests -v
   their assigned users and admins.
 - The service worker caches only static assets; pages and API data are never stored
   on the device.
-- `/api/query`, `/api/download`, and `/api/workflows` require an authenticated account
+- `/api/query`, `/api/download`, and `/api/workflows` accept either a logged-in session or a user-managed Bearer token
   with `Can API` (administrators have it implicitly); that permission never bypasses
   per-station Browse or Download rights.
+- `/api-tokens` lets API-enabled users create, rename, expire, and revoke their own
+  tokens. Token secrets are shown once and stored only as hashes.
 - Login attempts are not rate limited by the application; add a limit at the reverse
   proxy when the portal is exposed to the Internet.
 - Pages load Bootstrap, Leaflet, and Chart.js from public CDNs and, by default, map

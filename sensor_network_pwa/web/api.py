@@ -1,11 +1,11 @@
-"""Session-authenticated data and workflow API."""
+"""Session- or bearer-authenticated data, token and workflow API."""
 
 import functools
 
 from flask import Blueprint, abort, after_this_request, g, jsonify, render_template, request, send_file
 
 from sensor_network_pwa.storage import load_station_rows, make_zip_for_download
-from sensor_network_pwa.timeutil import parse_iso_ts
+from sensor_network_pwa.timeutil import parse_iso_ts, utc_iso, utc_now
 from sensor_network_pwa.validation import safe_filename
 from sensor_network_pwa.web.access import available_instruments, current_user, get_store, storage_root_or_404
 from sensor_network_pwa.workflows import validate_workflow_graph
@@ -17,15 +17,51 @@ MAX_QUERY_ROWS = 10000
 def api_required(view):
     @functools.wraps(view)
     def wrapped(*args, **kwargs):
-        user = current_user()
+        authorization = request.headers.get("Authorization", "")
+        user = None
+        if authorization:
+            scheme, separator, token = authorization.partition(" ")
+            if scheme.lower() != "bearer" or not separator or not token.strip():
+                return jsonify(error="invalid Authorization header"), 401
+            user = get_store().authenticate_api_token(token.strip())
+        else:
+            user = current_user()
         if user is None:
             return jsonify(error="authentication required"), 401
+        if user.get("force_password_change"):
+            return jsonify(error="password change required"), 403
         if user.get("role") != "admin" and not user.get("can_api"):
             return jsonify(error="Can API permission required"), 403
         g.user = user
         return view(*args, **kwargs)
 
     return wrapped
+
+
+def session_api_required(view):
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        user = current_user()
+        if user is None:
+            return jsonify(error="session authentication required"), 401
+        if user.get("force_password_change"):
+            return jsonify(error="password change required"), 403
+        if user.get("role") != "admin" and not user.get("can_api"):
+            return jsonify(error="Can API permission required"), 403
+        g.user = user
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def _token_expiry(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    expires = parse_iso_ts(text)
+    if expires is None or expires <= utc_now():
+        abort(400, "expires_at must be a future ISO-8601 timestamp")
+    return utc_iso(expires)
 
 
 def _station_list(value):
@@ -107,11 +143,64 @@ def _can_browse(station):
 
 
 @bp.route("/workflows")
-@api_required
+@session_api_required
 def dashboard():
     root = storage_root_or_404()
     stations = [station for station in available_instruments(root) if get_store().can_browse(g.user, station)]
     return render_template("workflows/dashboard.html", stations=stations)
+
+
+@bp.get("/api-tokens")
+@session_api_required
+def token_dashboard():
+    return render_template("api_tokens/dashboard.html")
+
+
+@bp.get("/api/tokens")
+@session_api_required
+def list_tokens():
+    return jsonify({"tokens": get_store().list_api_tokens(g.user["username"])})
+
+
+@bp.post("/api/tokens")
+@session_api_required
+def create_token():
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    if not name or len(name) > 100:
+        abort(400, "name is required and must be at most 100 characters")
+    return jsonify(
+        get_store().create_api_token(g.user["username"], name, _token_expiry(payload.get("expires_at")))
+    ), 201
+
+
+@bp.get("/api/tokens/<int:token_id>")
+@session_api_required
+def get_token(token_id):
+    token = get_store().get_api_token(token_id, g.user["username"])
+    if token is None:
+        abort(404)
+    return jsonify(token)
+
+
+@bp.put("/api/tokens/<int:token_id>")
+@session_api_required
+def update_token(token_id):
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    if not name or len(name) > 100:
+        abort(400, "name is required and must be at most 100 characters")
+    if not get_store().update_api_token(token_id, g.user["username"], name, _token_expiry(payload.get("expires_at"))):
+        abort(404)
+    return jsonify(get_store().get_api_token(token_id, g.user["username"]))
+
+
+@bp.delete("/api/tokens/<int:token_id>")
+@session_api_required
+def delete_token(token_id):
+    if not get_store().delete_api_token(token_id, g.user["username"]):
+        abort(404)
+    return "", 204
 
 
 @bp.get("/api/workflows")

@@ -466,7 +466,7 @@ class WebAndAuthTests(unittest.TestCase):
         client = self.client("admin")
         pages = (
             "/", "/login", "/station/station", "/station/station/chart-settings", "/public/station/station",
-            "/admin", "/admin/dashboard", "/anomalies", "/profile",
+            "/admin", "/admin/dashboard", "/anomalies", "/profile", "/workflows", "/api-tokens",
         )  # fmt: skip
         assets = set()
         for path in pages:
@@ -481,6 +481,8 @@ class WebAndAuthTests(unittest.TestCase):
                 assets.update(re.findall(r'(?:src|href)="(/static/[^"]+)"', body))
         self.assertIn("/static/js/station_browser.js", assets)
         self.assertIn("/static/css/public_station.css", assets)
+        self.assertIn("/static/js/workflows.js", assets)
+        self.assertIn("/static/js/api_tokens.js", assets)
         for asset in sorted(assets):
             with self.subTest(asset=asset):
                 response = client.get(asset, headers={"Accept-Encoding": "gzip"})
@@ -874,6 +876,56 @@ class WebAndAuthTests(unittest.TestCase):
         self.store.set_user_instrument_permission("bob", "station", "can_download", False)
         self.assertEqual(client.get("/api/query?station=station").status_code, 403)
         self.assertEqual(client.get("/api/download?station=station").status_code, 403)
+
+    def test_api_token_crud_and_bearer_authentication(self):
+        client = self.client("bob")
+        self.assertEqual(client.get("/api-tokens").status_code, 403)
+        self.assertEqual(client.post("/api/tokens", json={"name": "Exporter"}).status_code, 403)
+        self.store.set_can_api("bob", True)
+
+        created = client.post("/api/tokens", json={"name": "Exporter"})
+        self.assertEqual(created.status_code, 201)
+        token_id = created.json["id"]
+        secret = created.json["token"]
+        self.assertTrue(secret.startswith("snp_"))
+        self.assertNotIn("token", client.get("/api/tokens").json["tokens"][0])
+        self.assertNotIn("token", client.get(f"/api/tokens/{token_id}").json)
+        self.assertEqual(self.client("admin").get(f"/api/tokens/{token_id}").status_code, 404)
+        self.assertEqual(client.get("/api-tokens").status_code, 200)
+
+        bearer = {"Authorization": f"Bearer {secret}"}
+        response = self.app.test_client().get(
+            "/api/query", query_string={"station": "station", "limit": 1}, headers=bearer
+        )
+        self.assertEqual(response.status_code, 200)
+        listed = client.get("/api/tokens").json["tokens"][0]
+        self.assertIsNotNone(listed["last_used_at"])
+
+        updated = client.put(f"/api/tokens/{token_id}", json={"name": "Renamed"})
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json["name"], "Renamed")
+        self.assertEqual(
+            self.app.test_client().get("/api/tokens", headers=bearer).status_code,
+            401,
+        )
+        self.assertEqual(client.delete(f"/api/tokens/{token_id}").status_code, 204)
+        self.assertEqual(
+            self.app.test_client().get("/api/query?station=station", headers=bearer).status_code,
+            401,
+        )
+        self.assertEqual(
+            client.post("/api/tokens", json={"name": "Expired", "expires_at": "2020-01-01T00:00:00Z"}).status_code,
+            400,
+        )
+
+    def test_api_token_stops_working_when_can_api_is_revoked(self):
+        self.store.set_can_api("bob", True)
+        secret = self.client("bob").post("/api/tokens", json={"name": "Exporter"}).json["token"]
+        self.store.set_can_api("bob", False)
+        response = self.app.test_client().get(
+            "/api/query?station=station", headers={"Authorization": f"Bearer {secret}"}
+        )
+        self.assertEqual(response.status_code, 401)
 
     def test_workflow_crud_and_email_fires_only_on_condition_transition(self):
         self.store.set_can_api("bob", True)

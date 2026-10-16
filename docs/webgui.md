@@ -41,6 +41,7 @@ Set (see [configuration](configuration.md)):
 - `/api/admin/dashboard` JSON polled by the admin network dashboard
 - `/api/query` authenticated JSON query API
 - `/api/download` authenticated raw-hourly-file ZIP API
+- `/api-tokens`, `/api/tokens` API-token dashboard and CRUD API
 - `/workflows`, `/api/workflows` node workflow editor and CRUD API
 - `/admin` admin console
 - `/admin/dashboard` admin-only network dashboard
@@ -149,8 +150,9 @@ and the single-assignment `/admin/user-access` and `/admin/user-control`.
 
 ## Data API and workflows
 
-API endpoints use the logged-in web session and return `401` when there is no session
-or `403` when `Can API`/station rights are missing.
+Data and workflow API endpoints accept either the logged-in web session or
+`Authorization: Bearer <token>`. They return `401` when authentication is missing or
+invalid and `403` when `Can API` or station rights are missing.
 
 - `GET /api/query?station=<uuid>[,<uuid>]&from=<ISO>&to=<ISO>&fields=<field>[,<field>]&limit=1000`
   returns time-ordered JSON rows. The limit is capped at 10,000 rows per station.
@@ -158,6 +160,29 @@ or `403` when `Can API`/station rights are missing.
   the original hourly CSV files. `from` and `to` are optional UTC ISO-8601 timestamps.
 - `GET /api/workflows`, `POST /api/workflows`, `PUT /api/workflows/<id>` and
   `DELETE /api/workflows/<id>` manage only the logged-in user's workflows.
+
+### API tokens
+
+Users with `Can API` (and administrators, implicitly) manage their own tokens at
+`/api-tokens`. The session-only CRUD endpoints are:
+
+- `GET /api/tokens` and `GET /api/tokens/<id>`
+- `POST /api/tokens` with `{"name":"Exporter","expires_at":"2026-12-31T23:59:59Z"}`
+- `PUT /api/tokens/<id>` with a new name and optional expiry
+- `DELETE /api/tokens/<id>` to revoke the token immediately
+
+`expires_at` is optional but, when supplied, must be a future ISO-8601 timestamp.
+The complete token is returned only by `POST`; later reads expose only its prefix and
+metadata. The database stores a SHA-256 hash, not the credential. Use a token as follows:
+
+```bash
+curl -H 'Authorization: Bearer snp_REPLACE_WITH_TOKEN' \
+  'https://portal.example.org/api/query?station=station-a&limit=100'
+```
+
+Disabling the account or revoking `Can API` immediately stops all of its tokens. Tokens
+inherit the owner's current station Browse and Download permissions. Bearer credentials
+cannot access `/api/tokens`; token CRUD deliberately requires a logged-in web session.
 
 For example:
 
@@ -221,6 +246,9 @@ accepted.
 The `/workflows` editor uses Node-RED-style nodes and wires. The supported, intentionally
 bounded node catalogue is Station input → numeric Condition → Send email. For example,
 connect a station to `RainRate > 300`, then connect that condition to an email node.
+Use the × button to remove a node and its connections. Select a wire to change its
+source or target, or remove the connection. The current graph can be downloaded as
+SVG, PNG, or JPG from the editor toolbar; raster exports are rendered at 2× resolution.
 
 ![Workflow editor showing a station connected to a RainRate condition and an email action](images/workflow-editor.jpg)
 
@@ -554,6 +582,7 @@ The auth database now stores:
 - per-user Browse and Download assignments
 - per-user station chart-control rights
 - user-owned workflow graphs, enabled state, last-run errors, and node firing state
+- hashed user-owned API tokens, labels, expiry, and last-used timestamps
 - login and password-reset tokens
 - anomalies and anomaly silence windows
 - per-user notification time and notifications
@@ -574,6 +603,8 @@ The auth database now stores:
 - account requests need a syntactically valid email address
 - workflow graphs use a fixed node catalogue, validate every edge and email address,
   and recheck station access during every watchdog run
+- API token secrets are shown once, stored only as hashes, individually revocable,
+  and checked against the owner's current status and rights on every request
 - CSV rows with more values than the file header are read without the surplus values
 - the station browser table offers every column present in the selected window, also when hourly files have different headers
 - Chart.js is loaded from the CDN pinned to major version 4

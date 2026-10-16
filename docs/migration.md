@@ -11,7 +11,7 @@ conversion is needed.
   keys are ignored, and `httpEnabled` is not required.
 - **Data directory**: mount or point `pathStorage` at the directory the collector writes.
 - **Database**: keep `authDbPath` as it is. When it is not set, the default is still
-  `<pathStorage>/collector_auth.sqlite`, so accounts, permissions, workflows, chart
+  `<pathStorage>/collector_auth.sqlite`, so accounts, permissions, API tokens, workflows, chart
   settings, logos, and the anomaly log are kept.
 - **`webSessionSecret`**: keep the same value so users stay logged in.
 - **Environment**: `PWA_CONFIG` names the configuration file for Gunicorn;
@@ -34,5 +34,5 @@ conversion is needed.
 3. Start `web` and `watchdog` here. The old web service may keep running during the
    switch (on another host port): both use the same SQLite file safely.
 4. Point the reverse proxy at the new `web` service and check login, a station page,
-   API permission assignment, `/workflows`, and the watchdog log line `Watchdog started`.
+   API permission assignment, `/api-tokens`, `/workflows`, and the watchdog log line `Watchdog started`.
 5. Remove the old web service from the collector's `docker-compose.yml`.
