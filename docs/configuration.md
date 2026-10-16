@@ -109,7 +109,8 @@ user's notification time (default 60 minutes, set on `/profile`). See
 [Failure notifications](webgui.md#failure-notifications).
 
 The same scan evaluates enabled workflows against each referenced station's newest
-stored row. A condition action fires on a false-to-true transition. The watchdog runs
+stored row. A condition with multiple station inputs is true when any station matches,
+and its action fires on an aggregate false-to-true transition. The watchdog runs
 inside `python main.py`, or alone with `--watchdog-only`; Gunicorn workers do not run
 it. Run exactly one watchdog process.
 

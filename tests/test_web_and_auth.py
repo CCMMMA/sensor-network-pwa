@@ -929,10 +929,22 @@ class WebAndAuthTests(unittest.TestCase):
 
     def test_workflow_crud_and_email_fires_only_on_condition_transition(self):
         self.store.set_can_api("bob", True)
+        self.write_row(
+            "cool-station",
+            self.now,
+            {"timestamp": self.now.isoformat().replace("+00:00", "Z"), "TempOut": 10},
+        )
         client = self.client("bob")
         graph = {
             "nodes": [
                 {"id": "source", "type": "station", "x": 10, "y": 10, "data": {"station": "station"}},
+                {
+                    "id": "second-source",
+                    "type": "station",
+                    "x": 10,
+                    "y": 120,
+                    "data": {"station": "cool-station"},
+                },
                 {
                     "id": "threshold",
                     "type": "condition",
@@ -950,6 +962,7 @@ class WebAndAuthTests(unittest.TestCase):
             ],
             "edges": [
                 {"source": "source", "target": "threshold"},
+                {"source": "second-source", "target": "threshold"},
                 {"source": "threshold", "target": "mail"},
             ],
         }
@@ -964,6 +977,8 @@ class WebAndAuthTests(unittest.TestCase):
             run_workflows(cfg, self.store, self.cfg["storage_root"], self.now + timedelta(minutes=1))
         self.assertEqual(len(sent), 1)
         self.assertEqual(sent[0][1], ["alerts@example.org"])
+        self.assertIn("on station", sent[0][3])
+        self.assertNotIn("cool-station", sent[0][3])
         self.assertEqual(client.delete(f"/api/workflows/{workflow_id}").status_code, 204)
 
     def test_workflow_rejects_unreadable_station_and_invalid_email(self):

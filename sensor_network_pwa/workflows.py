@@ -68,8 +68,10 @@ def validate_workflow_graph(graph, station_allowed):
     for node_id, node_type in types.items():
         if node_type == "station" and incoming[node_id]:
             return False, "station nodes cannot have inputs"
-        if node_type == "condition" and (len(incoming[node_id]) != 1 or types[incoming[node_id][0]] != "station"):
-            return False, "each condition must have exactly one station input"
+        if node_type == "condition" and (
+            not incoming[node_id] or any(types[source] != "station" for source in incoming[node_id])
+        ):
+            return False, "each condition must have at least one station input"
         if node_type == "email" and (
             not incoming[node_id] or any(types[src] != "condition" for src in incoming[node_id])
         ):
@@ -101,14 +103,19 @@ def run_workflows(cfg: dict, store, storage_root: str, now: datetime | None = No
                     rows = load_station_rows(storage_root, station, limit=1)
                     station_rows[node["id"]] = rows[-1] if rows else None
             fired_conditions = set()
+            matched_stations: dict[str, list[str]] = {}
             for node in nodes.values():
                 if node["type"] != "condition":
                     continue
-                source = incoming[node["id"]][0]
-                row = station_rows.get(source)
                 data = node["data"]
-                actual = to_float(row.get(data["field"])) if row else None
-                active = actual is not None and OPERATORS[data["operator"]](actual, float(data["value"]))
+                matches = []
+                for source in incoming[node["id"]]:
+                    row = station_rows.get(source)
+                    actual = to_float(row.get(data["field"])) if row else None
+                    if actual is not None and OPERATORS[data["operator"]](actual, float(data["value"])):
+                        matches.append(nodes[source]["data"]["station"])
+                active = bool(matches)
+                matched_stations[node["id"]] = matches
                 state = store.get_workflow_state(workflow["id"], node["id"])
                 if active and not state["active"]:
                     fired_conditions.add(node["id"])
@@ -118,7 +125,9 @@ def run_workflows(cfg: dict, store, storage_root: str, now: datetime | None = No
                     continue
                 sources = [nodes[src] for src in incoming[node["id"]] if src in fired_conditions]
                 details = ", ".join(
-                    f"{src['data']['field']} {src['data']['operator']} {src['data']['value']}" for src in sources
+                    f"{src['data']['field']} {src['data']['operator']} {src['data']['value']} "
+                    f"on {', '.join(matched_stations[src['id']])}"
+                    for src in sources
                 )
                 sent = send_email(
                     cfg,

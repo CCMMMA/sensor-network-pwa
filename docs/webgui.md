@@ -236,8 +236,9 @@ Workflow create/update bodies have this shape:
 }
 ```
 
-Node IDs must be unique. Each condition has exactly one station input; each email has
-one or more condition inputs. Supported operators are `>`, `>=`, `<`, `<=`, `==`, and
+Node IDs must be unique. Each condition has one or more station inputs; it is true when
+any connected station's newest reading satisfies the comparison. Each email has one
+or more condition inputs. Supported operators are `>`, `>=`, `<`, `<=`, `==`, and
 `!=`. Graphs are limited to 50 nodes and 100 edges. Station nodes may reference public
 stations or stations the owner can browse. Recipients must be syntactically valid email
 addresses. Arbitrary code, HTTP requests, shell commands, and custom node types are not
@@ -246,6 +247,10 @@ accepted.
 The `/workflows` editor uses Node-RED-style nodes and wires. The supported, intentionally
 bounded node catalogue is Station input → numeric Condition → Send email. For example,
 connect a station to `RainRate > 300`, then connect that condition to an email node.
+Several station nodes can feed the same condition to apply one threshold to all of
+them; the aggregate condition fires when it changes from no matching stations to at
+least one matching station.
+
 Use the × button to remove a node and its connections. Select a wire to change its
 source or target, or remove the connection. The current graph can be downloaded as
 SVG, PNG, or JPG from the editor toolbar; raster exports are rendered at 2× resolution.

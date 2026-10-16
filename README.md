@@ -18,7 +18,7 @@ project only reads that data and serves it. It never connects to MQTT.
 - Session- or bearer-authenticated query/download API, user-managed API tokens, and Node-RED-style email workflows with editable connections and SVG/PNG/JPG export, gated by a separate `Can API` permission
 - Accounts: admin approval of requests, forced/self-service password change, reset by email
 - Administration page with per-user and per-station rights tables, roles, and account enable/disable
-- Watchdog anomaly detection and workflow evaluation, with persisted state and email notifications
+- Watchdog anomaly detection and workflow evaluation, including shared conditions across multiple stations, with persisted state and email notifications
 - Profile page where each user sets the notification time and acknowledges, snoozes, or clears notifications
 - Web app logo and per-station logo upload
 - Optional InfluxDB v2 reads that complement the CSV files on the public dashboards
