@@ -15,7 +15,8 @@ project only reads that data and serves it. It never connects to MQTT.
 - Live station trend pages and a public sensor network dashboard, reading only the hourly files a view needs
 - Public station dashboard with per-station trend-chart axis settings (JSON export/import)
 - Per-user, per-station Browse and CSV/ZIP Download permissions; new users start with no station assignments
-- Session- or bearer-authenticated query/download API, user-managed API tokens, and Node-RED-style email workflows with editable connections and SVG/PNG/JPG export, gated by a separate `Can API` permission
+- Session- or bearer-authenticated query/download API and user-managed API tokens, gated by `Can API`
+- Node-RED-style email workflows with editable connections and SVG/PNG/JPG export, independently gated by `Can workflows`
 - Accounts: admin approval of requests, forced/self-service password change, reset by email
 - Administration page with per-user and per-station rights tables, roles, and account enable/disable
 - Watchdog anomaly detection and workflow evaluation, including shared conditions across multiple stations, with persisted state and email notifications

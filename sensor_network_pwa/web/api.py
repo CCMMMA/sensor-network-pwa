@@ -54,6 +54,30 @@ def session_api_required(view):
     return wrapped
 
 
+def workflow_required(view):
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        authorization = request.headers.get("Authorization", "")
+        user = None
+        if authorization:
+            scheme, separator, token = authorization.partition(" ")
+            if scheme.lower() != "bearer" or not separator or not token.strip():
+                return jsonify(error="invalid Authorization header"), 401
+            user = get_store().authenticate_api_token(token.strip())
+        else:
+            user = current_user()
+        if user is None:
+            return jsonify(error="authentication required"), 401
+        if user.get("force_password_change"):
+            return jsonify(error="password change required"), 403
+        if user.get("role") != "admin" and not user.get("can_workflows"):
+            return jsonify(error="Can workflows permission required"), 403
+        g.user = user
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
 def _token_expiry(value):
     text = str(value or "").strip()
     if not text:
@@ -143,7 +167,7 @@ def _can_browse(station):
 
 
 @bp.route("/workflows")
-@session_api_required
+@workflow_required
 def dashboard():
     root = storage_root_or_404()
     stations = [station for station in available_instruments(root) if get_store().can_browse(g.user, station)]
@@ -204,13 +228,13 @@ def delete_token(token_id):
 
 
 @bp.get("/api/workflows")
-@api_required
+@workflow_required
 def list_workflows():
     return jsonify({"workflows": get_store().list_workflows(g.user["username"])})
 
 
 @bp.post("/api/workflows")
-@api_required
+@workflow_required
 def create_workflow():
     payload = request.get_json(silent=True) or {}
     name = str(payload.get("name") or "").strip()
@@ -226,7 +250,7 @@ def create_workflow():
 
 
 @bp.put("/api/workflows/<int:workflow_id>")
-@api_required
+@workflow_required
 def update_workflow(workflow_id):
     existing = get_store().get_workflow(workflow_id)
     if not existing or existing["username"] != g.user["username"]:
@@ -243,7 +267,7 @@ def update_workflow(workflow_id):
 
 
 @bp.delete("/api/workflows/<int:workflow_id>")
-@api_required
+@workflow_required
 def delete_workflow(workflow_id):
     if not get_store().delete_workflow(workflow_id, g.user["username"]):
         abort(404)

@@ -245,6 +245,15 @@ def set_user_api():
     return admin_done("users", ok, msg)
 
 
+@bp.route("/admin/user-workflows", methods=["POST"])
+@admin_required
+def set_user_workflows():
+    username = request.form.get("username", "")
+    allow = parse_boolish(request.form.get("allow", "0"), False)
+    ok, msg = get_store().set_can_workflows(username, allow)
+    return admin_done("users", ok, msg)
+
+
 @bp.route("/admin/station-permissions", methods=["POST"])
 @admin_required
 def set_station_permissions():

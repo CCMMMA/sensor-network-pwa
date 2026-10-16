@@ -120,6 +120,7 @@
               {% else %}
                 Browse {{ u.browse|length }} · Download {{ u.download|length }} · Charts {{ u.controls|length }}
                 · API {{ 'yes' if u.can_api else 'no' }}
+                · workflows {{ 'yes' if u.can_workflows else 'no' }}
               {% endif %}
             </td>
             <td class="text-end">
@@ -175,8 +176,16 @@
                       <input type="hidden" name="username" value="{{ u.username }}">
                       <input type="hidden" name="allow" value="{{ 0 if u.can_api else 1 }}">
                       <div class="d-flex justify-content-between align-items-center gap-2">
-                        <div><b>Can API</b><div class="form-text">Use data API endpoints and create workflows.</div></div>
+                        <div><b>Can API</b><div class="form-text">Use data API endpoints and manage API tokens.</div></div>
                         <button class="btn btn-sm {{ 'btn-outline-danger' if u.can_api else 'btn-outline-success' }}" type="submit">{{ 'Revoke' if u.can_api else 'Grant' }}</button>
+                      </div>
+                    </form>
+                    <form method="post" action="{{ url_for('admin.set_user_workflows') }}" class="card card-body p-2 mb-2">
+                      <input type="hidden" name="username" value="{{ u.username }}">
+                      <input type="hidden" name="allow" value="{{ 0 if u.can_workflows else 1 }}">
+                      <div class="d-flex justify-content-between align-items-center gap-2">
+                        <div><b>Can workflows</b><div class="form-text">Create, edit and run data workflows.</div></div>
+                        <button class="btn btn-sm {{ 'btn-outline-danger' if u.can_workflows else 'btn-outline-success' }}" type="submit">{{ 'Revoke' if u.can_workflows else 'Grant' }}</button>
                       </div>
                     </form>
                     {% endif %}

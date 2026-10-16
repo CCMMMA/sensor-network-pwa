@@ -952,7 +952,7 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
 
     def test_workflow_crud_and_email_fires_only_on_condition_transition(self):
-        self.store.set_can_api("bob", True)
+        self.store.set_can_workflows("bob", True)
         self.write_row(
             "cool-station",
             self.now,
@@ -1006,7 +1006,7 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertEqual(client.delete(f"/api/workflows/{workflow_id}").status_code, 204)
 
     def test_workflow_rejects_unreadable_station_and_invalid_email(self):
-        self.store.set_can_api("bob", True)
+        self.store.set_can_workflows("bob", True)
         graph = {
             "nodes": [
                 {"id": "s", "type": "station", "data": {"station": "missing"}},
@@ -1017,6 +1017,29 @@ class WebAndAuthTests(unittest.TestCase):
         }
         response = self.client("bob").post("/api/workflows", json={"name": "Bad", "graph": graph})
         self.assertEqual(response.status_code, 400)
+
+    def test_can_workflows_is_independent_from_can_api(self):
+        client = self.client("bob")
+        self.assertEqual(client.get("/workflows").status_code, 403)
+        self.assertEqual(client.get("/api/workflows").status_code, 403)
+        self.assertNotIn("Data workflows", client.get("/").get_data(as_text=True))
+
+        self.assertEqual(
+            self.store.set_can_workflows("bob", True),
+            (True, "Workflow permission updated"),
+        )
+        self.assertEqual(client.get("/workflows").status_code, 200)
+        self.assertEqual(client.get("/api/workflows").status_code, 200)
+        self.assertIn("Data workflows", client.get("/").get_data(as_text=True))
+        self.assertEqual(client.get("/api/query?station=station").status_code, 403)
+        self.assertEqual(client.get("/api-tokens").status_code, 403)
+
+        response = self.client("admin").post(
+            "/admin/user-workflows",
+            data={"username": "bob", "allow": "0"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(self.store.get_user("bob")["can_workflows"])
 
     def test_config_needs_no_collector_settings(self):
         self.assertFalse(self.cfg["enable_influx"])
