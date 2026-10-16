@@ -18,9 +18,15 @@ at a directory holding collector CSV files:
 ## Automated checks
 
 ```bash
-python -m compileall -q main.py webapp_wsgi.py tests
+python -m pip install -r requirements-dev.txt
+ruff check .
+ruff format --check .
+mypy
+python -m compileall -q main.py webapp_wsgi.py sensor_network_pwa tests
 python -m unittest discover -s tests -v
 ```
+
+`pyproject.toml` configures ruff (lint rules, 120-column formatting) and mypy.
 
 `tests/test_web_and_auth.py` uses temporary files only; no collector, broker, InfluxDB,
 or SMTP server is needed. It covers configuration loading without collector settings,
@@ -33,7 +39,22 @@ header, map popup escaping, session-secret fallback, the onboarding-only usernam
 check, email validation of account requests, hiding of restricted stations, selection
 of hourly files, the unchanged-poll shortcut, response compression, chart thinning,
 dashboard cards for interleaved device rows, the administration page actions, station page ranges, paging and CSV export, and the
-progressive web app assets (doctype, manifest, icons, service worker).
+progressive web app assets (doctype, manifest, icons, service worker), and the static scripts and
+stylesheets of the pages (served, compressed, free of inline code and template syntax).
+It also covers `Can API`, API-token CRUD and Bearer authentication, query/download authorization, workflow CRUD and validation,
+station isolation, and edge-triggered workflow email execution.
+
+The workflow editor JavaScript can be syntax-checked separately when Node.js is
+available:
+
+```bash
+node --check sensor_network_pwa/web/static/js/workflows.js
+node --check sensor_network_pwa/web/static/js/api_tokens.js
+```
+
+`docs/workflows-api.md` is both repository documentation and the source rendered by
+the public `/docs/workflows-api` route. Update that file rather than maintaining a
+separate web-page copy. Production images must continue to copy `docs/`.
 
 ## Container checks
 
@@ -44,4 +65,6 @@ docker run --rm --volume "$PWD/tests:/tests:ro" sensor-network-pwa:check \
   python -m unittest discover -s /tests -v
 ```
 
-If adding a runtime file, update both `.dockerignore` and the `Dockerfile` copy list.
+Modules, templates and static files inside `sensor_network_pwa/`, plus the canonical
+online documentation under `docs/`, are copied into the image. If adding another
+runtime file outside them, update both `.dockerignore` and the `Dockerfile` copy list.

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Offline - {{ app_name }}{% endblock %}
+{% block body_class %}container py-5{% endblock %}
+{% block body %}
+  <div class="card shadow-sm mx-auto" style="max-width: 32rem;">
+    <div class="card-body text-center">
+      <h1 class="h4">You are offline</h1>
+      <p class="text-muted">{{ app_name }} needs a network connection to load station data.</p>
+      <button class="btn btn-primary" type="button" onclick="window.location.reload()">Try again</button>
+    </div>
+  </div>
+{% endblock %}

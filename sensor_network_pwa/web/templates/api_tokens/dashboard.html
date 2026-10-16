@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}API tokens{% endblock %}
+{% block body_class %}bg-light{% endblock %}
+{% block body %}
+<main class="container py-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div><h1 class="h3 mb-0">API tokens</h1><div class="text-muted">Create bearer tokens for programmatic API access.</div></div>
+    <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('public.index') }}">Home</a><a class="btn btn-outline-primary" href="{{ url_for('api.dashboard') }}">Workflows</a><a class="btn btn-outline-secondary" href="{{ url_for('public.workflows_api_documentation') }}">Documentation</a></div>
+  </div>
+  <div id="tokenMessage" class="alert d-none" role="status"></div>
+  <div id="newTokenSecret" class="alert alert-warning d-none" role="status">
+    <strong>Copy this token now. It will not be shown again.</strong>
+    <div class="input-group mt-2"><input id="tokenSecret" class="form-control font-monospace" readonly><button id="copyToken" class="btn btn-outline-dark" type="button">Copy</button></div>
+  </div>
+  <section class="card mb-4"><div class="card-body">
+    <h2 class="h5">Create token</h2>
+    <div class="row g-3 align-items-end">
+      <div class="col-md-5"><label class="form-label" for="newTokenName">Name</label><input id="newTokenName" class="form-control" maxlength="100" placeholder="Data export script"></div>
+      <div class="col-md-5"><label class="form-label" for="newTokenExpiry">Expires (optional)</label><input id="newTokenExpiry" class="form-control" type="datetime-local"></div>
+      <div class="col-md-2 d-grid"><button id="createToken" class="btn btn-primary" type="button">Create</button></div>
+    </div>
+  </div></section>
+  <section class="card"><div class="card-body">
+    <h2 class="h5">Your tokens</h2>
+    <div class="table-responsive"><table class="table align-middle"><thead><tr><th>Name</th><th>Prefix</th><th>Created</th><th>Last used</th><th>Expires</th><th>Actions</th></tr></thead><tbody id="tokenRows"></tbody></table></div>
+  </div></section>
+</main>
+<script src="{{ url_for('static', filename='js/api_tokens.js') }}"></script>
+{% endblock %}

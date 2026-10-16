@@ -1,0 +1,81 @@
+html, body { min-height: 100%; overflow-y: auto; }
+.dashboard-root { min-height: 100vh; display: flex; flex-direction: column; }
+#cards .card-body { padding: .3rem .45rem; }
+.metric-label { font-size: .72rem; line-height: 1.1; margin-bottom: .1rem; }
+.metric-value { font-size: .95rem; line-height: 1.0; font-weight: 600; }
+.metric-unit { font-size: .72rem; margin-left: .2rem; }
+#chartsWrap { flex: 1 1 auto; min-height: 0; overflow: visible; }
+.chart-card { height: 170px; }
+.chart-card .card-body { height: 100%; display: flex; flex-direction: column; }
+.chart-card canvas { height: 112px !important; }
+.chart-card.fullscreen {
+  position: fixed;
+  inset: 10px;
+  z-index: 2000;
+  height: auto;
+  border: 2px solid rgba(13,110,253,.18);
+  box-shadow: 0 1rem 3rem rgba(0,0,0,.25);
+}
+.chart-card.fullscreen canvas { height: calc(100vh - 330px) !important; }
+.chart-card .fullscreen-branding { display: none; }
+.chart-card.fullscreen .fullscreen-branding {
+  display: grid;
+  grid-template-columns: minmax(90px, 140px) 1fr minmax(90px, 140px);
+  align-items: center;
+  gap: .75rem;
+  margin-bottom: .5rem;
+}
+.fullscreen-branding-logos { display: flex; align-items: center; gap: .5rem; }
+.fullscreen-branding-logo-left { justify-content: flex-start; }
+.fullscreen-branding-logo-right { justify-content: flex-end; }
+.fullscreen-branding img { max-height: 38px; max-width: 100%; object-fit: contain; }
+.fullscreen-station-name { font-weight: 700; font-size: 1.35rem; text-align: center; line-height: 1.15; }
+.chart-card .fullscreen-stats { display: none; }
+.chart-card.fullscreen .fullscreen-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: .5rem;
+  margin-top: auto;
+  padding-top: .5rem;
+  align-items: stretch;
+}
+.chart-card.fullscreen .fullscreen-hint { display: none; }
+.chart-card .fullscreen-hint { font-size: .72rem; color: #6c757d; }
+.stat-chip {
+  border: 1px solid #dee2e6;
+  border-radius: .5rem;
+  padding: .5rem .65rem;
+  background: #fff;
+}
+.stat-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .6rem;
+}
+.stat-chip-section {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .15rem;
+}
+.stat-chip-label { font-size: .72rem; color: #6c757d; }
+.stat-chip-value { font-weight: 700; line-height: 1.1; }
+.stat-chip-time {
+  font-size: .72rem;
+  color: #6c757d;
+  line-height: 1.2;
+  word-break: break-word;
+}
+.aqi-card { min-height: 94px; }
+.aqi-stack { display: flex; gap: .45rem; align-items: center; }
+.aqi-lights { display: flex; flex-direction: column-reverse; gap: .35rem; }
+.aqi-light { width: 16px; height: 16px; border-radius: 50%; background: #d9d9d9; border: 1px solid rgba(0,0,0,.15); opacity: .35; }
+.aqi-light.active { opacity: 1; box-shadow: 0 0 0 2px rgba(0,0,0,.05); }
+.aqi-light.good.active { background: #198754; }
+.aqi-light.warning.active { background: #ffc107; }
+.aqi-light.bad.active { background: #dc3545; }
+.aqi-status-value { font-size: 1.4rem; line-height: 1; font-weight: 700; }
+body.chart-focus-active #cards,
+body.chart-focus-active #aqiStatus,
+body.chart-focus-active #charts > div:not(.focus-host) { display: none !important; }
+body.chart-focus-active #charts > div.focus-host { display: block !important; width: 100%; }

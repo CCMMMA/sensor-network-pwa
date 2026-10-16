@@ -1,0 +1,8 @@
+.table-wrap { max-height: 78vh; overflow: auto; border: 1px solid #ddd; }
+table { border-collapse: collapse; width: 100%; font-size: 12px; }
+th, td { border: 1px solid #ddd; padding: 4px; vertical-align: top; }
+th { position: sticky; top: 0; background: #f8f8f8; z-index: 2; }
+.status-ok { color: #157347; font-weight: 700; }
+.status-alarm { color: #bb2d3b; font-weight: 700; }
+.missing-cell { background: #ffe7e7; color: #8b0000; font-weight: 600; }
+.group-cell { font-weight: 700; background: #f9fafb; }

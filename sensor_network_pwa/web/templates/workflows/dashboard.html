@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Data workflows{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/workflows.css') }}">{% endblock %}
+{% block body_class %}bg-light{% endblock %}
+{% block body %}
+<main class="container-fluid py-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div><h1 class="h3 mb-0">Data workflows</h1><div class="text-muted">Connect station, condition and email nodes. Enabled flows run with the watchdog.</div></div>
+    <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('public.index') }}">Home</a><a class="btn btn-outline-secondary" href="{{ url_for('api.token_dashboard') }}">API tokens</a><a class="btn btn-outline-secondary" href="{{ url_for('public.workflows_api_documentation') }}">Documentation</a><div class="input-group w-auto"><select id="exportFormat" class="form-select" aria-label="Workflow image format"><option value="png">PNG</option><option value="jpg">JPG</option><option value="svg">SVG</option></select><button id="exportFlow" class="btn btn-outline-secondary" type="button">Download image</button></div><button id="newFlow" class="btn btn-outline-primary" type="button">New</button><button id="saveFlow" class="btn btn-primary" type="button">Save workflow</button></div>
+  </div>
+  <div id="flowMessage" class="alert d-none" role="status"></div>
+  <div class="row g-3">
+    <aside class="col-xl-2 col-md-3">
+      <div class="card mb-3"><div class="card-body">
+        <label class="form-label" for="flowSelect">Workflow</label><select id="flowSelect" class="form-select mb-2"></select>
+        <label class="form-label" for="flowName">Name</label><input id="flowName" class="form-control mb-2" maxlength="100">
+        <div class="form-check"><input id="flowEnabled" class="form-check-input" type="checkbox" checked><label for="flowEnabled" class="form-check-label">Enabled</label></div>
+        <button id="deleteFlow" class="btn btn-outline-danger btn-sm mt-3" type="button" disabled>Delete workflow</button>
+      </div></div>
+      <div class="card"><div class="card-body"><h2 class="h6">Nodes</h2><div class="d-grid gap-2"><button class="btn btn-outline-secondary add-node" type="button" data-type="station">Station input</button><button class="btn btn-outline-secondary add-node" type="button" data-type="condition">Condition</button><button class="btn btn-outline-secondary add-node" type="button" data-type="email">Send email</button></div><p class="small text-muted mt-3 mb-0">Drag nodes. Click an output dot, then an input dot, to connect them. Click a wire to edit or remove it.</p></div></div>
+    </aside>
+    <section class="col-xl-8 col-md-6"><div id="flowCanvas" class="flow-canvas" aria-label="Workflow canvas"><svg id="flowEdges" aria-hidden="true"></svg><div id="flowNodes"></div></div></section>
+    <aside class="col-xl-2 col-md-3"><div class="card"><div class="card-body"><h2 class="h6">Selection settings</h2><div id="nodeEditor" class="text-muted small">Select a node or connection.</div></div></div></aside>
+  </div>
+</main>
+<script id="workflowConfig" type="application/json">{{ {'stations': stations} | tojson }}</script>
+<script src="{{ url_for('static', filename='js/workflows.js') }}"></script>
+{% endblock %}
