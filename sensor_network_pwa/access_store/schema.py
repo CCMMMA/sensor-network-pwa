@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS users (
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     force_password_change INTEGER NOT NULL DEFAULT 0,
-    can_api INTEGER NOT NULL DEFAULT 0
+    can_api INTEGER NOT NULL DEFAULT 0,
+    can_workflows INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS account_requests (
@@ -174,4 +175,5 @@ MIGRATIONS = (
     "ALTER TABLE user_instruments ADD COLUMN can_browse INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE user_instruments ADD COLUMN can_download INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE users ADD COLUMN can_api INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN can_workflows INTEGER NOT NULL DEFAULT 0",
 )

@@ -34,5 +34,6 @@ conversion is needed.
 3. Start `web` and `watchdog` here. The old web service may keep running during the
    switch (on another host port): both use the same SQLite file safely.
 4. Point the reverse proxy at the new `web` service and check login, a station page,
-   API permission assignment, `/api-tokens`, `/workflows`, and the watchdog log line `Watchdog started`.
+   independent `Can API` and `Can workflows` permission assignment, `/api-tokens`,
+   `/workflows`, and the watchdog log line `Watchdog started`.
 5. Remove the old web service from the collector's `docker-compose.yml`.

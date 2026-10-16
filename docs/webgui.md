@@ -89,11 +89,12 @@ tables and statistics; `Download CSV` permits exporting a chosen interval with s
 columns (and therefore also permits browsing that interval). Administrators always have
 both rights.
 
-`Can API` is a separate account permission. It permits a regular user to call the data
-API and open the workflow editor, but does not bypass station rights. Administrators
-always have API access. API queries and workflow station nodes require Browse access;
-API downloads require Download access. Consequently, open stations work in the API for
-an API-enabled account, while restricted stations remain unavailable unless assigned.
+`Can API` and `Can workflows` are separate account permissions. `Can API` permits a
+regular user to call the data API and manage API tokens. `Can workflows` permits the
+user to open the workflow editor and create, change, delete, and run workflows. Neither
+permission bypasses station rights, and administrators implicitly have both. API
+queries and workflow station nodes require Browse access; API downloads require
+Download access.
 
 The station visibility policy remains separate:
 
@@ -123,8 +124,8 @@ returns to the tab it was started from (`/admin#users`, `/admin#stations`,
   password at the first login" is ticked by default). `Manage` opens, for one user:
   - a table of all stations with separate `Browse`, `Download CSV`, and `Chart settings`
     checkboxes; a newly created regular user has none of these rights
-  - a `Can API` control, separate from station rights, that grants or revokes access to
-    the protected data API and workflow editor
+  - separate `Can API` and `Can workflows` controls: the first governs the protected
+    data API and API tokens, while the second governs the editor and workflow execution
   - account actions: change the email, assign a strong password (optionally requiring
     another change at next login), ask for or stop asking for a new password, make
     administrator / regular user, disable / enable the account
@@ -157,7 +158,8 @@ overview of the surrounding web-interface policies.
 
 Data and workflow API endpoints accept either the logged-in web session or
 `Authorization: Bearer <token>`. They return `401` when authentication is missing or
-invalid and `403` when `Can API` or station rights are missing.
+invalid and `403` when `Can API`, `Can workflows`, or station rights required by the
+specific endpoint are missing.
 
 - `GET /api/query?station=<uuid>[,<uuid>]&from=<ISO>&to=<ISO>&fields=<field>[,<field>]&limit=1000`
   returns time-ordered JSON rows. The limit is capped at 10,000 rows per station.
@@ -265,7 +267,7 @@ SVG, PNG, or JPG from the editor toolbar; raster exports are rendered at 2× res
 The watchdog evaluates enabled flows using the newest stored sample. An email is sent
 only when the condition changes from false to true; it becomes eligible again after
 the condition becomes false. Workflows run only while their owner is active, retains
-`Can API`, and can still browse every referenced station. SMTP uses the existing mail
+`Can workflows`, and can still browse every referenced station. SMTP uses the existing mail
 configuration. Run exactly one watchdog process to avoid duplicate event evaluation.
 The workflow list also exposes `last_run_at` and `last_error` for operational diagnosis.
 Changing or deleting a workflow is restricted to its owner, including for administrators.
@@ -586,7 +588,7 @@ Connectivity alarms are based on dynamic threshold:
 
 The auth database now stores:
 
-- users, including the global `Can API` flag
+- users, including the global `Can API` and `Can workflows` flags
 - account requests
 - station visibility policies
 - per-user Browse and Download assignments

@@ -21,9 +21,9 @@ docker compose logs --tail=100 web watchdog
 ```
 
 Open `/`, verify station freshness, then log in and check the intended Browse,
-Download, and `Can API` permissions. Open `/api-tokens` with an API-enabled account,
+Download, `Can API`, and `Can workflows` permissions. Open `/api-tokens` with an API-enabled account,
 create a short-lived test token, and query an allowed station with its Bearer value.
-Open `/workflows` and confirm its readable stations are offered. The watchdog logs
+Open `/workflows` with a workflow-enabled account and confirm its readable stations are offered. The watchdog logs
 `Watchdog started (interval=...)`.
 
 The application publishes the canonical [workflow and API reference](workflows-api.md)
@@ -49,9 +49,9 @@ rollback does not roll back the SQLite schema.
 | Every page redirects to `/change-password` | The account is flagged for a password change (sample admin password, or forced by an admin); it is lifted once a strong password is saved. |
 | `logLevel` seems ignored | It is applied by both `main.py` and `webapp_wsgi.py`; a `logLevel` key in the config file takes precedence over the `LOG_LEVEL` environment variable. |
 | No watchdog notifications | Check that one watchdog process runs, `pathStorage`, SMTP settings, the user's email address, alarm silencing, and whether the user acknowledged, snoozed, or cleared the notification on `/profile`. A failed scan is logged as `Watchdog scan failed` or `Watchdog check failed for station=...` and retried at the next interval. |
-| Workflow editor/API returns `403` | The account needs `Can API` unless it is an administrator. The referenced station must also grant Browse access; `/api/download` requires Download access. A forced password change blocks API requests too. |
+| Workflow editor/API returns `403` | Workflow routes require `Can workflows`; data routes require `Can API`, unless the account is an administrator. The referenced station must also grant Browse access; `/api/download` requires Download access. A forced password change blocks requests too. |
 | Bearer request returns `401` | Check the `Authorization: Bearer ...` syntax, token expiry/revocation, and that its owner is active and still has `Can API`. The full secret cannot be recovered; create a replacement token. |
-| A workflow does not send email | Check that it is enabled, its owner is active and retains `Can API` and Browse access, exactly one watchdog runs, SMTP is configured, and the condition changed from false to true. Inspect `last_error` through `GET /api/workflows`. |
+| A workflow does not send email | Check that it is enabled, its owner is active and retains `Can workflows` and Browse access, exactly one watchdog runs, SMTP is configured, and the condition changed from false to true. Inspect `last_error` through `GET /api/workflows`. |
 | A workflow sends no second email while a reading remains above the threshold | This is intentional edge-triggered behavior. The condition must become false before a later true value can fire again. |
 | Duplicate alarm or workflow emails | More than one watchdog process is running. |
 | Too many or too few reminder emails | Each user sets the notification time on `/profile` (default 60 minutes). |

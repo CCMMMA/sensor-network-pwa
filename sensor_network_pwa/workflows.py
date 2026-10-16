@@ -87,7 +87,7 @@ def run_workflows(cfg: dict, store, storage_root: str, now: datetime | None = No
     for workflow in store.list_workflows(enabled_only=True):
         try:
             owner = store.get_user(workflow["username"])
-            if not owner or not owner.get("active") or not (owner.get("role") == "admin" or owner.get("can_api")):
+            if not owner or not owner.get("active") or not (owner.get("role") == "admin" or owner.get("can_workflows")):
                 continue
             graph = workflow["graph"]
             nodes = {node["id"]: node for node in graph["nodes"]}

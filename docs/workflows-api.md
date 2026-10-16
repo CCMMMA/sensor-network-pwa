@@ -28,16 +28,25 @@ separate online copy is maintained.
 
 Data and workflow API endpoints accept either a logged-in web session or an
 `Authorization: Bearer <token>` header. They return `401` when authentication is
-missing or invalid and `403` when the account lacks **Can API** or the required
-station permission. A forced password change also blocks API access.
+missing or invalid and `403` when the account lacks the permission required by the
+endpoint or the required station permission. A forced password change also blocks
+access.
 
-Administrators implicitly have **Can API**. Other accounts must receive it from an
-administrator. This permission does not bypass station rights:
+Administrators implicitly have both global permissions. Other accounts may receive
+them independently from an administrator:
 
-- queries and workflow station nodes require Browse access;
+- **Can API** permits data queries, downloads, and API-token management;
+- **Can workflows** permits opening the workflow editor and creating, changing,
+  deleting, and running the user's workflows;
+- data queries and workflow station nodes still require Browse access;
 - ZIP downloads require Download access;
-- disabling an account or removing **Can API** immediately disables its tokens and
-  stops its workflows.
+- disabling an account stops its tokens and workflows;
+- removing **Can API** immediately disables its tokens, while removing
+  **Can workflows** immediately stops its workflows.
+
+A workflow-enabled user does not need **Can API** when using the browser session.
+Bearer tokens can only be created and authenticated while their owner has **Can API**;
+therefore bearer access to workflow endpoints requires both permissions.
 
 Use a bearer token like this:
 
@@ -47,7 +56,8 @@ curl -H 'Authorization: Bearer snp_REPLACE_WITH_TOKEN' \
 ```
 
 Malformed bearer headers and invalid, expired, or revoked credentials return `401`.
-Missing **Can API**, a forced password change, or missing station rights return `403`.
+Missing **Can API** for data endpoints, missing **Can workflows** for workflow
+endpoints, a forced password change, or missing station rights return `403`.
 An unknown station returns `404`. Validation errors return `400`. Routes that call
 Flask's standard `abort()` may return an HTML error body, so clients must use the HTTP
 status and must not assume that every error response is JSON.
@@ -280,7 +290,7 @@ Enabled workflows are evaluated by the watchdog, not by a browser request or a
 Gunicorn worker. Each scan performs the following steps:
 
 1. Select every enabled workflow.
-2. Verify that its owner is active and still has **Can API** (or is an administrator).
+2. Verify that its owner is active and still has **Can workflows** (or is an administrator).
 3. Verify Browse access to every referenced station.
 4. Load the newest stored CSV row for each station node.
 5. Convert the selected field to a number and evaluate each condition.
@@ -319,7 +329,7 @@ send email, check that:
 
 - it is enabled;
 - exactly one watchdog is running;
-- its owner is active, has **Can API**, and can browse every referenced station;
+- its owner is active, has **Can workflows**, and can browse every referenced station;
 - the newest stored row contains a numeric value for the configured field;
 - SMTP is configured and working;
 - the condition actually changed from false to true rather than remaining true.
