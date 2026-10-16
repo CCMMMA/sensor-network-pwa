@@ -150,6 +150,11 @@ and the single-assignment `/admin/user-access` and `/admin/user-control`.
 
 ## Data API and workflows
 
+The complete, canonical reference is [Workflows and data API](workflows-api.md). The
+running application renders that same Markdown file at `/docs/workflows-api`, linked
+from the home, workflow, and API-token pages. The summary below is retained as an
+overview of the surrounding web-interface policies.
+
 Data and workflow API endpoints accept either the logged-in web session or
 `Authorization: Bearer <token>`. They return `401` when authentication is missing or
 invalid and `403` when `Can API` or station rights are missing.

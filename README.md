@@ -124,6 +124,7 @@ still `<pathStorage>/collector_auth.sqlite`, so existing accounts and policies a
 - [Documentation index](docs/README.md)
 - [Configuration reference](docs/configuration.md)
 - [Web GUI and policies](docs/webgui.md)
+- [Complete API reference](docs/workflows-api.md) (also published by the app at `/docs/workflows-api`)
 - [Production WSGI setup](docs/wsgi.md)
 - [Docker deployment](docs/docker.md)
 - [Operations and troubleshooting](docs/operations.md)

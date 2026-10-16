@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import markdown
 from flask import Blueprint, abort, jsonify, render_template, request, url_for
 
 from sensor_network_pwa.config import parse_boolish
@@ -29,6 +30,20 @@ from sensor_network_pwa.web.access import (
 from sensor_network_pwa.web.util import request_preference_cookie
 
 bp = Blueprint("public", __name__)
+DOCS_ROOT = Path(__file__).resolve().parents[2] / "docs"
+
+
+@bp.get("/docs/workflows-api")
+def workflows_api_documentation():
+    """Render the repository's canonical workflow and API documentation."""
+    source = DOCS_ROOT / "workflows-api.md"
+    if not source.is_file():
+        abort(404, "Documentation is not installed")
+    content = markdown.markdown(
+        source.read_text(encoding="utf-8"),
+        extensions=("fenced_code", "tables", "toc"),
+    )
+    return render_template("public/documentation.html", content=content)
 
 
 @bp.route("/assets/<kind>/<path:name>")

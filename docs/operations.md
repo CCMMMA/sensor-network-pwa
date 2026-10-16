@@ -26,6 +26,10 @@ create a short-lived test token, and query an allowed station with its Bearer va
 Open `/workflows` and confirm its readable stations are offered. The watchdog logs
 `Watchdog started (interval=...)`.
 
+The application publishes the canonical [workflow and API reference](workflows-api.md)
+at `/docs/workflows-api`; use it when verifying authentication, graph structure, and
+edge-triggered execution.
+
 ## Backup and restore
 
 The SQLite database holds account data, hashed API tokens, workflows, workflow firing state, permissions,

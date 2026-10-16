@@ -467,6 +467,7 @@ class WebAndAuthTests(unittest.TestCase):
         pages = (
             "/", "/login", "/station/station", "/station/station/chart-settings", "/public/station/station",
             "/admin", "/admin/dashboard", "/anomalies", "/profile", "/workflows", "/api-tokens",
+            "/docs/workflows-api",
         )  # fmt: skip
         assets = set()
         for path in pages:
@@ -496,6 +497,29 @@ class WebAndAuthTests(unittest.TestCase):
         packed = client.get("/static/js/station_browser.js", headers={"Accept-Encoding": "gzip"})
         self.assertEqual(packed.headers["Content-Encoding"], "gzip")
         self.assertIn(b"pageConfig", gzip.decompress(packed.get_data()))
+
+    def test_workflow_api_documentation_uses_canonical_markdown(self):
+        response = self.client().get("/docs/workflows-api")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("<h1", body)
+        self.assertIn("Workflows and data API", body)
+        self.assertIn("How workflow execution works", body)
+        for endpoint in (
+            "GET /api/query",
+            "GET /api/download",
+            "GET /api/public/station/&lt;uuid&gt;/snapshot",
+            "GET /api/tokens",
+            "GET /api/workflows",
+            "GET /api/admin/dashboard",
+            "GET /api/check-username",
+        ):
+            self.assertIn(endpoint, body)
+        self.assertTrue(body.lstrip().lower().startswith("<!doctype html>"))
+
+        self.assertIn("/docs/workflows-api", self.client().get("/").get_data(as_text=True))
+        self.assertIn("/docs/workflows-api", self.client("admin").get("/workflows").get_data(as_text=True))
+        self.assertIn("/docs/workflows-api", self.client("admin").get("/api-tokens").get_data(as_text=True))
 
     def test_page_config_island_escapes_station_values(self):
         hostile = "<img src=x onerror=alert(1)>&'"

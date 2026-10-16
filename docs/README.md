@@ -2,6 +2,7 @@
 
 - [Configuration](configuration.md): storage location, web access, InfluxDB reads, email, and watchdog settings.
 - [Web GUI, API, workflows, and policies](webgui.md): accounts, access rights, dashboards, API tokens, data API, and workflow editor.
+- [Complete API reference](workflows-api.md): every `/api` endpoint, authentication, payloads, responses, and errors; also rendered by the running application at `/docs/workflows-api`.
 - [Production WSGI](wsgi.md): Gunicorn, reverse proxy, and deployment troubleshooting.
 - [Docker deployment](docker.md): web and watchdog services sharing the collector's data volume.
 - [Operations](operations.md): process roles, workflow/watchdog verification, backups, and failure diagnosis.

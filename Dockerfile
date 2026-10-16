@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY main.py webapp_wsgi.py /app/
 COPY sensor_network_pwa /app/sensor_network_pwa
+COPY docs /app/docs
 
 EXPOSE 8080
 

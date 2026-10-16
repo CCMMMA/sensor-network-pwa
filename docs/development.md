@@ -52,6 +52,10 @@ node --check sensor_network_pwa/web/static/js/workflows.js
 node --check sensor_network_pwa/web/static/js/api_tokens.js
 ```
 
+`docs/workflows-api.md` is both repository documentation and the source rendered by
+the public `/docs/workflows-api` route. Update that file rather than maintaining a
+separate web-page copy. Production images must continue to copy `docs/`.
+
 ## Container checks
 
 ```bash
@@ -61,5 +65,6 @@ docker run --rm --volume "$PWD/tests:/tests:ro" sensor-network-pwa:check \
   python -m unittest discover -s /tests -v
 ```
 
-Modules, templates and static files inside `sensor_network_pwa/` are copied into the image with the package.
-If adding a runtime file outside it, update both `.dockerignore` and the `Dockerfile` copy list.
+Modules, templates and static files inside `sensor_network_pwa/`, plus the canonical
+online documentation under `docs/`, are copied into the image. If adding another
+runtime file outside them, update both `.dockerignore` and the `Dockerfile` copy list.
