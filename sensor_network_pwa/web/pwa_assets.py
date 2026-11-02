@@ -5,7 +5,7 @@ import math
 import struct
 import zlib
 
-PWA_THEME_COLOR = "#0b57d0"
+PWA_THEME_COLOR = "#003b71"
 PWA_ICON_SIZES = (180, 192, 512)
 
 
@@ -14,9 +14,9 @@ def _png_chunk(kind: bytes, data: bytes) -> bytes:
 
 
 @functools.cache
-def build_pwa_icon_png(size: int) -> bytes:
+def build_pwa_icon_png(size: int, theme_color: str = PWA_THEME_COLOR) -> bytes:
     """Application icon: a sensor dot with two signal rings on the theme colour."""
-    bg = bytes(int(PWA_THEME_COLOR[i : i + 2], 16) for i in (1, 3, 5))
+    bg = bytes(int(theme_color[i : i + 2], 16) for i in (1, 3, 5))
     fg = b"\xff\xff\xff"
     half = size / 2
     # Everything stays inside the central 80% so the icon also works as a maskable one.

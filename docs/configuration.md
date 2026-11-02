@@ -70,6 +70,12 @@ are ignored, so a configuration file shared with the collector works unchanged.
 - `webAppLogo`: optional absolute path to the app logo image
 - `webAppLink`: optional external URL opened when the home-page logo is clicked
 - `webInfoLink`: optional external URL shown as `Info` before `Login` on the home page
+- `webThemePrimary` (`WEB_THEME_PRIMARY`): main brand/navigation and installed-PWA
+  colour as a three- or six-digit hexadecimal CSS colour (default `#003b71`)
+- `webThemeSecondary` (`WEB_THEME_SECONDARY`): supporting links, highlights and
+  gradients (default `#007c91`)
+- `webThemeAccent` (`WEB_THEME_ACCENT`): small emphasis details and status accents
+  (default `#f2b134`). Invalid theme colours safely fall back to these defaults.
 - `mapTileUrl` (`MAP_TILE_URL`): Leaflet tile URL for the home-page map. Defaults to
   OpenStreetMap's canonical `https://tile.openstreetmap.org/{z}/{x}/{y}.png`; do not
   restore the obsolete `{s}.tile.openstreetmap.org` form. For a public production

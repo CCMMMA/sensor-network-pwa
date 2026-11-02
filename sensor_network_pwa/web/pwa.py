@@ -4,8 +4,8 @@ import json
 
 from flask import Blueprint, Response, abort, render_template, url_for
 
-from sensor_network_pwa.web.access import get_cfg
-from sensor_network_pwa.web.pwa_assets import PWA_ICON_SIZES, PWA_THEME_COLOR, build_pwa_icon_png
+from sensor_network_pwa.web.access import app_logo_path, current_user, get_cfg, logo_url
+from sensor_network_pwa.web.pwa_assets import PWA_ICON_SIZES, build_pwa_icon_png
 
 bp = Blueprint("pwa", __name__)
 
@@ -13,7 +13,19 @@ bp = Blueprint("pwa", __name__)
 @bp.app_context_processor
 def pwa_template_values():
     """Values that base.html needs on every page."""
-    return {"pwa_app_name": get_cfg()["web_app_name"], "pwa_theme_color": PWA_THEME_COLOR}
+    cfg = get_cfg()
+    return {
+        "pwa_app_name": cfg["web_app_name"],
+        "pwa_theme_color": cfg["web_theme_primary"],
+        "portal_theme": {
+            "primary": cfg["web_theme_primary"],
+            "secondary": cfg["web_theme_secondary"],
+            "accent": cfg["web_theme_accent"],
+        },
+        "portal_user": current_user(),
+        "portal_logo_url": logo_url(app_logo_path()),
+        "portal_info_url": cfg.get("web_info_link"),
+    }
 
 
 @bp.route("/manifest.webmanifest")
@@ -31,8 +43,19 @@ def manifest():
         "start_url": url_for("public.index"),
         "scope": url_for("public.index"),
         "display": "standalone",
-        "background_color": "#ffffff",
-        "theme_color": PWA_THEME_COLOR,
+        "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+        "orientation": "any",
+        "background_color": "#f4f7fa",
+        "theme_color": get_cfg()["web_theme_primary"],
+        "categories": ["weather", "education", "utilities"],
+        "shortcuts": [
+            {
+                "name": "Station network",
+                "short_name": "Stations",
+                "url": url_for("public.index") + "#stationsMap",
+                "icons": [{"src": url_for("pwa.icon", size=192), "sizes": "192x192", "type": "image/png"}],
+            }
+        ],
         "icons": icons,
     }
     response = Response(json.dumps(data), mimetype="application/manifest+json")
@@ -42,7 +65,14 @@ def manifest():
 
 @bp.route("/service-worker.js")
 def service_worker():
-    precache = [url_for("pwa.offline"), url_for("pwa.manifest")]
+    precache = [
+        url_for("pwa.offline"),
+        url_for("pwa.manifest"),
+        url_for("static", filename="css/portal.css"),
+        url_for("static", filename="css/cookie_consent.css"),
+        url_for("static", filename="js/theme.js"),
+        url_for("static", filename="js/pwa.js"),
+    ]
     precache += [url_for("pwa.icon", size=size) for size in PWA_ICON_SIZES]
     script = render_template("pwa/service-worker.js", offline_url=url_for("pwa.offline"), precache=precache)
     response = Response(script, mimetype="text/javascript")
@@ -55,7 +85,7 @@ def service_worker():
 def icon(size: int):
     if size not in PWA_ICON_SIZES:
         abort(404)
-    response = Response(build_pwa_icon_png(size), mimetype="image/png")
+    response = Response(build_pwa_icon_png(size, get_cfg()["web_theme_primary"]), mimetype="image/png")
     response.headers["Cache-Control"] = "public, max-age=86400"
     return response
 

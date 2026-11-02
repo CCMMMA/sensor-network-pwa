@@ -45,6 +45,20 @@ def _text(raw: dict, keys, env_name: str, default: str = "") -> str:
     return str(cfg_value(raw, keys, env_name=env_name, default=default) or default)
 
 
+def _theme_color(raw: dict, key: str, env_name: str, default: str) -> str:
+    """Return a safe CSS hexadecimal colour, falling back on invalid input."""
+    value = _text(raw, [key], env_name, default).strip()
+    if len(value) in (4, 7) and value.startswith("#"):
+        try:
+            int(value[1:], 16)
+        except ValueError:
+            pass
+        else:
+            return value.lower()
+    logger.warning("Invalid %s theme colour %r; using %s", key, value, default)
+    return default
+
+
 def _web_settings(raw: dict, storage_root) -> dict:
     return {
         "http_host": str(cfg_value(raw, ["httpHost"], env_name="HTTP_HOST", default="0.0.0.0")),
@@ -59,6 +73,9 @@ def _web_settings(raw: dict, storage_root) -> dict:
         "web_app_short_name": _text(raw, ["webAppShortName"], "WEB_APP_SHORT_NAME").strip() or "Sensor Network",
         "web_app_link": _text(raw, ["webAppLink"], "WEB_APP_LINK").strip(),
         "web_info_link": _text(raw, ["webInfoLink"], "WEB_INFO_LINK").strip(),
+        "web_theme_primary": _theme_color(raw, "webThemePrimary", "WEB_THEME_PRIMARY", "#003b71"),
+        "web_theme_secondary": _theme_color(raw, "webThemeSecondary", "WEB_THEME_SECONDARY", "#007c91"),
+        "web_theme_accent": _theme_color(raw, "webThemeAccent", "WEB_THEME_ACCENT", "#f2b134"),
         "map_tile_url": _text(
             raw,
             ["mapTileUrl"],

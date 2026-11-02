@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Privacy and data protection{% endblock %}
 {% block body %}
+<article class="page-shell">
 <p><a href="{{ url_for('public.index') }}">Home</a></p>
 <h1 class="h3">Privacy and data protection</h1>
 {% if not cfg.privacy_controller_name or not cfg.privacy_controller_contact or not cfg.privacy_lawful_basis %}
@@ -24,4 +25,5 @@
 <h2 class="h5">Security and automated decisions</h2>
 <p>The portal uses access controls, hashed passwords and API-token secrets, single-use reset/onboarding tokens, secure response headers, audit events, and encrypted transport when deployed behind HTTPS. It does not make decisions producing legal or similarly significant effects solely by automated processing.</p>
 <p class="text-muted small">Notice version: 2026-11-02.</p>
+</article>
 {% endblock %}

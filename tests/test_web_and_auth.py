@@ -170,6 +170,25 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertIn("dataset.bsTheme", script)
         self.assertIn("theme_preference", script)
 
+    def test_configurable_brand_theme_updates_pages_manifest_icons_and_offline_shell(self):
+        themed_cfg = dict(
+            self.cfg,
+            web_theme_primary="#123456",
+            web_theme_secondary="#278090",
+            web_theme_accent="#f0b429",
+        )
+        app = create_web_app(themed_cfg, self.store)
+        client = app.test_client()
+        page = client.get("/").get_data(as_text=True)
+        self.assertIn("--portal-primary:#123456", page)
+        self.assertIn('content="#123456"', page)
+        manifest = client.get("/manifest.webmanifest").get_json(force=True)
+        self.assertEqual(manifest["theme_color"], "#123456")
+        self.assertIn("standalone", manifest["display_override"])
+        worker = client.get("/service-worker.js").get_data(as_text=True)
+        self.assertIn('"/static/css/portal.css"', worker)
+        self.assertIn("sensor-network-pwa-v5", worker)
+
     def test_password_change_requires_strong_password(self):
         client = self.client("bob")
         client.post("/change-password", data={"password": "weakpass", "password2": "weakpass"})
