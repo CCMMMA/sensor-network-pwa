@@ -171,7 +171,9 @@ specific endpoint are missing.
 ### API tokens
 
 Users with `Can API` (and administrators, implicitly) manage their own tokens at
-`/api-tokens`. The session-only CRUD endpoints are:
+`/api-tokens`. The workflow toolbar links to token management only for those users;
+workflow-only accounts keep the editor without an inaccessible token-management link.
+The session-only CRUD endpoints are:
 
 - `GET /api/tokens` and `GET /api/tokens/<id>`
 - `POST /api/tokens` with `{"name":"Exporter","expires_at":"2026-12-31T23:59:59Z"}`

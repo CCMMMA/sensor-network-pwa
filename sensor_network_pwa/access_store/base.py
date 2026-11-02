@@ -3,10 +3,10 @@
 import secrets
 import sqlite3
 import threading
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from pathlib import Path
 
-from sensor_network_pwa.access_store.schema import MIGRATIONS, SCHEMA_SQL
+from sensor_network_pwa.access_store.schema import CAN_WORKFLOWS_MIGRATION, MIGRATIONS, SCHEMA_SQL
 from sensor_network_pwa.timeutil import now_utc_iso
 
 
@@ -48,8 +48,17 @@ class StoreBase:
         with self._lock, self._readonly_as_runtime_error(self._readonly_message()), self._connect() as con:
             con.executescript(SCHEMA_SQL)
             for statement in MIGRATIONS:
-                with suppress(sqlite3.OperationalError):
+                try:
                     con.execute(statement)
+                except sqlite3.OperationalError as error:
+                    if "duplicate column name" not in str(error).lower():
+                        raise
+                else:
+                    if statement == CAN_WORKFLOWS_MIGRATION:
+                        # Before workflow access became independent, Can API
+                        # also granted workflow access. Preserve that access
+                        # during upgrade; fresh users still default to false.
+                        con.execute("UPDATE users SET can_workflows=can_api")
 
     @staticmethod
     def _is_readonly_error(err: Exception) -> bool:

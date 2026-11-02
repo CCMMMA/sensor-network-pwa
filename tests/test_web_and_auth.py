@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -518,7 +519,9 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertTrue(body.lstrip().lower().startswith("<!doctype html>"))
 
         self.assertIn("/docs/workflows-api", self.client().get("/").get_data(as_text=True))
-        self.assertIn("/docs/workflows-api", self.client("admin").get("/workflows").get_data(as_text=True))
+        admin_workflows = self.client("admin").get("/workflows").get_data(as_text=True)
+        self.assertIn("/docs/workflows-api", admin_workflows)
+        self.assertIn('href="/api-tokens"', admin_workflows)
         self.assertIn("/docs/workflows-api", self.client("admin").get("/api-tokens").get_data(as_text=True))
 
     def test_page_config_island_escapes_station_values(self):
@@ -552,6 +555,27 @@ class WebAndAuthTests(unittest.TestCase):
                 thread.join()
             self.assertEqual(errors, [])
             self.assertEqual([user["username"] for user in stores[0].list_users()], ["admin"])
+
+    def test_workflow_permission_migration_preserves_legacy_api_access(self):
+        path = str(Path(self.temp.name) / "legacy.sqlite")
+        with sqlite3.connect(path) as con:
+            con.execute(
+                "CREATE TABLE users (username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, "
+                "email TEXT, role TEXT NOT NULL DEFAULT 'user', active INTEGER NOT NULL DEFAULT 1, "
+                "created_at TEXT NOT NULL, force_password_change INTEGER NOT NULL DEFAULT 0, "
+                "can_api INTEGER NOT NULL DEFAULT 0)"
+            )
+            con.executemany(
+                "INSERT INTO users(username,password_hash,created_at,can_api) VALUES(?,?,?,?)",
+                (
+                    ("api-user", "unused", "2026-01-01T00:00:00Z", 1),
+                    ("plain-user", "unused", "2026-01-01T00:00:00Z", 0),
+                ),
+            )
+
+        migrated = AccessStore(path)
+        self.assertEqual(migrated.get_user("api-user")["can_workflows"], 1)
+        self.assertEqual(migrated.get_user("plain-user")["can_workflows"], 0)
 
     def test_application_factory_registers_blueprints_and_isolates_state(self):
         endpoints = {rule.endpoint for rule in self.app.url_map.iter_rules()} - {"static"}
@@ -1028,7 +1052,9 @@ class WebAndAuthTests(unittest.TestCase):
             self.store.set_can_workflows("bob", True),
             (True, "Workflow permission updated"),
         )
-        self.assertEqual(client.get("/workflows").status_code, 200)
+        workflow_page = client.get("/workflows")
+        self.assertEqual(workflow_page.status_code, 200)
+        self.assertNotIn('href="/api-tokens"', workflow_page.get_data(as_text=True))
         self.assertEqual(client.get("/api/workflows").status_code, 200)
         self.assertIn("Data workflows", client.get("/").get_data(as_text=True))
         self.assertEqual(client.get("/api/query?station=station").status_code, 403)

@@ -36,4 +36,7 @@ conversion is needed.
 4. Point the reverse proxy at the new `web` service and check login, a station page,
    independent `Can API` and `Can workflows` permission assignment, `/api-tokens`,
    `/workflows`, and the watchdog log line `Watchdog started`.
+   During the schema upgrade, existing `Can API` grants are copied to `Can workflows`
+   so previously authorized workflow users and running workflows keep working; review
+   and separate those permissions after the first start where appropriate.
 5. Remove the old web service from the collector's `docker-compose.yml`.

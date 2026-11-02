@@ -165,6 +165,8 @@ CREATE TABLE IF NOT EXISTS write_probe (
 """
 
 # Each statement fails with "duplicate column name" once applied, which is how it is skipped.
+CAN_WORKFLOWS_MIGRATION = "ALTER TABLE users ADD COLUMN can_workflows INTEGER NOT NULL DEFAULT 0"
+
 MIGRATIONS = (
     "ALTER TABLE users ADD COLUMN force_password_change INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE account_requests ADD COLUMN reviewed_at TEXT",
@@ -175,5 +177,5 @@ MIGRATIONS = (
     "ALTER TABLE user_instruments ADD COLUMN can_browse INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE user_instruments ADD COLUMN can_download INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE users ADD COLUMN can_api INTEGER NOT NULL DEFAULT 0",
-    "ALTER TABLE users ADD COLUMN can_workflows INTEGER NOT NULL DEFAULT 0",
+    CAN_WORKFLOWS_MIGRATION,
 )
