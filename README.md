@@ -8,7 +8,8 @@ project only reads that data and serves it. It never connects to MQTT.
 
 ## Features
 
-- Installable progressive web app (web manifest, service worker, offline page) built on Bootstrap
+- Installable, responsive Bootstrap progressive web app with configurable branding,
+  light/dark themes, a web manifest, service worker and offline shell
 - Map-based station discovery on the home page, with per-station popups
 - Data browsing per station: searchable parameter picker, shared axes per unit, paged table, statistics
 - Publication-quality plots (vector SVG, PNG up to 1200 dpi) and CSV download of any time range
@@ -105,7 +106,7 @@ tests/                     unittest suite (temporary files only, no external ser
 docs/                      configuration, web GUI, deployment and operations guides
 config.json.sample         sample configuration
 Dockerfile, docker-compose.yml.sample, nginx/   container deployment
-.github/workflows/ci-cd.yml                     lint and type checks, tests on Python 3.10-3.14, image build, smoke test and GHCR publish
+.github/workflows/ci-cd.yml                     quality/security checks, tests on Python 3.10-3.14, image scan/SBOM, smoke test and GHCR publish
 ```
 
 ## Sharing data with the collector

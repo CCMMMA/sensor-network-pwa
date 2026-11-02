@@ -15,8 +15,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  dependency-review:
+    name: Review dependency changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@v5
+
   quality:
-    name: Lint, format and types
+    name: Lint, format, types, and frontend syntax
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -36,6 +47,34 @@ jobs:
         run: ruff format --check .
       - name: Type check
         run: mypy
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in sensor_network_pwa/web/static/js/*.js; do
+            node --check "$file"
+          done
+
+  security:
+    name: Audit Python dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install audit tools
+        run: python -m pip install -r requirements-dev.txt
+      - name: Audit runtime dependencies
+        run: pip-audit --strict --requirement requirements.txt
 
   test:
     name: Python ${{ matrix.python }}
@@ -64,9 +103,9 @@ jobs:
 
   container:
     name: Build, test, and deliver container
-    needs: [quality, test]
+    needs: [quality, security, test]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -119,6 +158,29 @@ jobs:
             curl --silent --show-error --fail --output /dev/null "http://127.0.0.1:8080${path}"
             echo "ok ${path}"
           done
+      - name: Scan image for fixable high-severity vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: pwa:ci
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+      - name: Generate software bill of materials
+        uses: anchore/sbom-action@v0.24.3
+        with:
+          image: pwa:ci
+          format: spdx-json
+          output-file: sensor-network-pwa.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Upload software bill of materials
+        uses: actions/upload-artifact@v7
+        with:
+          name: container-sbom-${{ github.sha }}
+          path: sensor-network-pwa.spdx.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Publish tested image to GHCR
         if: >-
           github.event_name == 'push' &&
