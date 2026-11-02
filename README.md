@@ -77,7 +77,7 @@ and watchdog services from the same image (see [Docker deployment](docs/docker.m
 | `mapTileUrl`, `mapTileAttribution` | Home-map tile provider URL and required attribution |
 | `adminUser`, `adminPassword` | Initial admin account, created only if missing |
 | `influxdb`, `influxdb*` | Optional InfluxDB v2 read access |
-| `smtp*` | Optional email delivery (alarms, workflows, onboarding, password reset) |
+| `smtp*` | Optional queued email delivery; `smtpQueueBatchSize` limits each watchdog batch |
 | `watchdogIntervalSec` | Seconds between anomaly and workflow scans (minimum 10) |
 
 Most keys can also come from environment variables; see the

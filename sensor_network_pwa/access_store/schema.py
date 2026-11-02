@@ -112,6 +112,8 @@ CREATE TABLE IF NOT EXISTS notifications (
     acknowledged_at TEXT,
     snoozed_until TEXT,
     cleared_at TEXT,
+    send_claimed_at TEXT,
+    recovery_claimed_at TEXT,
     UNIQUE (username, anomaly_id)
 );
 
@@ -162,6 +164,43 @@ CREATE TABLE IF NOT EXISTS write_probe (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS impersonation_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_username TEXT NOT NULL,
+    target_username TEXT NOT NULL,
+    action TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS access_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT,
+    event_type TEXT NOT NULL,
+    station_uuid TEXT,
+    method TEXT NOT NULL,
+    path TEXT NOT NULL,
+    status_code INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_access_events_created_at ON access_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_access_events_username ON access_events(username);
+CREATE INDEX IF NOT EXISTS idx_access_events_station ON access_events(station_uuid);
+
+CREATE TABLE IF NOT EXISTS email_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recipients_json TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body_text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    next_attempt_at TEXT NOT NULL,
+    locked_at TEXT,
+    sent_at TEXT,
+    last_error TEXT
+);
 """
 
 # Each statement fails with "duplicate column name" once applied, which is how it is skipped.
@@ -178,4 +217,8 @@ MIGRATIONS = (
     "ALTER TABLE user_instruments ADD COLUMN can_download INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE users ADD COLUMN can_api INTEGER NOT NULL DEFAULT 0",
     CAN_WORKFLOWS_MIGRATION,
+    # Watchdog processes can briefly overlap during a container restart. These
+    # leases make deciding who sends an email atomic across processes.
+    "ALTER TABLE notifications ADD COLUMN send_claimed_at TEXT",
+    "ALTER TABLE notifications ADD COLUMN recovery_claimed_at TEXT",
 )

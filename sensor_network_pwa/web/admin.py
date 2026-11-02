@@ -1,11 +1,17 @@
 """Administration pages, anomaly log and admin actions."""
 
-from flask import Blueprint, abort, flash, g, jsonify, redirect, render_template, request, url_for
+import csv
+import io
+from collections import Counter
+from datetime import timedelta
+
+from flask import Blueprint, Response, abort, flash, g, jsonify, redirect, render_template, request, session, url_for
 
 from sensor_network_pwa.anomalies import build_admin_network_dashboard
 from sensor_network_pwa.config import parse_boolish
-from sensor_network_pwa.mailer import compose_external_url, send_email
+from sensor_network_pwa.mailer import compose_external_url, queue_email
 from sensor_network_pwa.storage import collect_instruments, get_station_preview
+from sensor_network_pwa.timeutil import parse_date_ymd, utc_now
 from sensor_network_pwa.validation import is_valid_email
 from sensor_network_pwa.web.access import (
     admin_required,
@@ -32,6 +38,7 @@ def index():
     all_browse = get_store().list_all_user_instruments()
     all_download = get_store().list_all_user_download_stations()
     all_controls = get_store().list_all_user_station_controls()
+    email_queue = get_store().email_queue_summary()
 
     for u in users:
         u["browse"] = set(all_browse.get(u["username"], []))
@@ -62,6 +69,7 @@ def index():
         regular_users=regular_users,
         pending_requests=pending_requests,
         smtp_ready=bool(get_cfg().get("smtp_enabled") and get_cfg().get("smtp_host")),
+        email_queue=email_queue,
     )
 
 
@@ -77,6 +85,96 @@ def dashboard():
 def dashboard_api():
     storage_root = storage_root_or_404()
     return jsonify(build_admin_network_dashboard(storage_root))
+
+
+ACCESS_EVENT_LABELS = {
+    "login_success": "Successful sign-in",
+    "login_failure": "Failed sign-in",
+    "logout": "Sign-out",
+    "station_dashboard": "Live dashboard",
+    "station_view": "Station data",
+    "csv_download": "CSV download",
+    "raw_download": "Raw ZIP download",
+    "api_query": "API query",
+    "api_download": "API download",
+}
+
+
+def _access_log_filters():
+    today = utc_now().date()
+    start_text = request.args.get("from_date", "") or (today - timedelta(days=29)).isoformat()
+    end_text = request.args.get("to_date", "") or today.isoformat()
+    start = parse_date_ymd(start_text)
+    end = parse_date_ymd(end_text)
+    if start is None or end is None or end < start:
+        abort(400, "Invalid access-log date range")
+    event_type = request.args.get("event_type", "").strip()
+    if event_type and event_type not in ACCESS_EVENT_LABELS:
+        abort(400, "Unknown access event type")
+    return {
+        "username": request.args.get("username", "").strip(),
+        "station_uuid": request.args.get("station_uuid", "").strip(),
+        "event_type": event_type,
+        "from_date": start.isoformat(),
+        "to_date": end.isoformat(),
+    }
+
+
+@bp.get("/admin/access-log")
+@admin_required
+def access_log():
+    filters = _access_log_filters()
+    events = get_store().list_access_events(**filters, limit=10000)
+    by_day = Counter(item["created_at"][:10] for item in events)
+    by_type = Counter(item["event_type"] for item in events)
+    by_user = Counter(item["username"] or "Anonymous" for item in events)
+    by_station = Counter(item["station_uuid"] for item in events if item["station_uuid"])
+    downloads = sum(by_type[k] for k in ("csv_download", "raw_download", "api_download"))
+    chart_data = {
+        "daily": [{"label": day, "value": by_day[day]} for day in sorted(by_day)],
+        "types": [
+            {"label": ACCESS_EVENT_LABELS.get(kind, kind), "value": count} for kind, count in by_type.most_common()
+        ],
+    }
+    return render_template(
+        "admin/access_log.html",
+        filters=filters,
+        events=events[:500],
+        truncated=len(events) > 500,
+        event_labels=ACCESS_EVENT_LABELS,
+        total_events=len(events),
+        downloads=downloads,
+        unique_users=len(by_user),
+        unique_stations=len(by_station),
+        top_users=by_user.most_common(10),
+        top_stations=by_station.most_common(10),
+        chart_data=chart_data,
+    )
+
+
+@bp.get("/admin/access-log/export.csv")
+@admin_required
+def access_log_csv():
+    filters = _access_log_filters()
+    events = get_store().list_access_events(**filters, limit=10000)
+    stream = io.StringIO()
+    writer = csv.writer(stream)
+    writer.writerow(("timestamp_utc", "username", "event", "station", "method", "path", "status"))
+    for item in events:
+        writer.writerow(
+            (
+                item["created_at"],
+                item["username"] or "",
+                item["event_type"],
+                item["station_uuid"] or "",
+                item["method"],
+                item["path"],
+                item["status_code"],
+            )
+        )
+    response = Response(stream.getvalue(), mimetype="text/csv")
+    response.headers["Content-Disposition"] = "attachment; filename=access-log.csv"
+    return response
 
 
 @bp.route("/anomalies")
@@ -114,6 +212,38 @@ def admin_done(tab: str, ok: bool, message: str):
     return redirect(url_for("admin.index") + f"#{tab}")
 
 
+@bp.route("/admin/impersonate", methods=["POST"])
+@admin_required
+def impersonate_user():
+    if session.get("impersonator_username"):
+        abort(409, "Stop the current impersonation before starting another")
+    admin_user = g.user
+    username = request.form.get("username", "").strip()
+    target = get_store().get_user(username)
+    if not target or int(target.get("active") or 0) != 1:
+        return admin_done("users", False, "Active user not found")
+    if username == admin_user["username"]:
+        return admin_done("users", False, "You are already signed in as this user")
+    get_store().record_impersonation_event(admin_user["username"], username, "started")
+    session["impersonator_username"] = admin_user["username"]
+    session["username"] = username
+    return redirect(url_for("public.index"))
+
+
+@bp.route("/impersonation/stop", methods=["POST"])
+def stop_impersonation():
+    admin_username = str(session.get("impersonator_username") or "")
+    target_username = str(session.get("username") or "")
+    admin_user = get_store().get_user(admin_username) if admin_username else None
+    if not admin_user or admin_user.get("role") != "admin" or int(admin_user.get("active") or 0) != 1:
+        session.clear()
+        abort(403, "The administrator account is no longer available")
+    get_store().record_impersonation_event(admin_username, target_username, "ended")
+    session.clear()
+    session["username"] = admin_username
+    return redirect(url_for("admin.index"))
+
+
 @bp.route("/admin/create-user", methods=["POST"])
 @admin_required
 def create_user():
@@ -134,13 +264,14 @@ def create_user():
     if email:
         token = get_store().create_login_token(username, ttl_minutes=60)
         link = compose_external_url(get_cfg()["base_url"], url_for("auth.fast_login"), {"token": token})
-        sent = send_email(
+        sent = queue_email(
             get_cfg(),
+            get_store(),
             [email],
             "Welcome to Sensor Network Collector",
             f"Hello {username},\n\nYour account has been created.\nFast login link (expires in 60 minutes):\n{link}\n",
         )
-        msg += "; a welcome email with a login link was sent" if sent else "; no welcome email was sent"
+        msg += "; a welcome email with a login link was queued" if sent else "; no welcome email was queued"
     return admin_done("users", True, msg)
 
 
@@ -155,8 +286,9 @@ def approve_request(request_id: int):
     if req and req.get("email"):
         token = get_store().create_account_request_token(request_id, ttl_hours=48)
         link = compose_external_url(get_cfg()["base_url"], url_for("auth.complete_account_request"), {"token": token})
-        sent = send_email(
+        sent = queue_email(
             get_cfg(),
+            get_store(),
             [req["email"]],
             "Sensor Network Collector: account approved",
             (
@@ -168,7 +300,7 @@ def approve_request(request_id: int):
             ),
         )
         if sent:
-            msg = f"Request approved; the onboarding link was emailed to {req['email']}"
+            msg = f"Request approved; the onboarding email was queued for {req['email']}"
         else:
             # Without email the link would be lost: hand it to the admin instead.
             msg = (

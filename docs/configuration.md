@@ -53,6 +53,13 @@ are ignored, so a configuration file shared with the collector works unchanged.
   empty or still a documented sample value (`replace-with-...`), the application
   generates a random secret once, stores it in the auth database, and logs a warning;
   all workers sharing `authDbPath` then use that stored secret
+- `privacyControllerName`, `privacyControllerContact`: controller identity and contact
+  shown in the public privacy notice; complete both before processing personal data
+- `privacyDpoContact`: optional DPO contact, when a DPO has been designated
+- `privacyLawfulBasis`: the controller's documented GDPR Article 6 basis and purpose
+- `privacyAccountRetentionDays`, `privacyAuditRetentionDays`: documented review periods
+  shown in the notice (default 365 days). The operator must execute and record deletion
+  or a justified retention exception; see [Data protection](data-protection.md)
 - `adminUser`, `adminPassword`: used only to create the admin account when it does not
   exist yet; an account created with the default (`admin`) or a sample password must
   change it at first login
@@ -77,6 +84,8 @@ are ignored, so a configuration file shared with the collector works unchanged.
 - `smtpUser`, `smtpPass`
 - `smtpFrom` (required when `smtpEnabled` is true)
 - `smtpUseTls`
+- `smtpQueueBatchSize` (`SMTP_QUEUE_BATCH_SIZE`): maximum messages delivered per
+  watchdog scan, from 1 to 100 (default 10)
 
 Behavior:
 
@@ -84,6 +93,9 @@ Behavior:
 - if `smtpPort`, `smtpUser`, and `smtpPass` are omitted, SMTP defaults to unauthenticated port `25`
 - if `smtpUser` is set, SMTP login is attempted
 - `smtpUseTls` can explicitly force TLS behavior; the default follows the port/auth fallback
+- all application email is first persisted in the auth database; the watchdog sends at
+  most `smtpQueueBatchSize` messages per scan and retries failures with exponential
+  backoff up to one hour
 - onboarding, forgot-password, alarm, and workflow emails need SMTP configuration;
   emails containing application links also need a correct `baseUrl`
 
@@ -95,7 +107,8 @@ Behavior:
   "smtpUser": "noreply@example.org",
   "smtpPass": "smtp-password",
   "smtpFrom": "noreply@example.org",
-  "smtpUseTls": true
+  "smtpUseTls": true,
+  "smtpQueueBatchSize": 10
 }
 ```
 

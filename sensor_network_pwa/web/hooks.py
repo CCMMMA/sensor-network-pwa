@@ -3,10 +3,10 @@
 import gzip
 from urllib.parse import urlsplit
 
-from flask import abort, redirect, request, url_for
+from flask import abort, g, redirect, request, session, url_for
 
 from sensor_network_pwa.log import logger
-from sensor_network_pwa.web.access import current_user, get_cfg
+from sensor_network_pwa.web.access import current_user, get_cfg, get_store
 
 COMPRESSIBLE_MIMETYPES = frozenset(
     {
@@ -32,6 +32,15 @@ PASSWORD_CHANGE_EXEMPT_ENDPOINTS = frozenset(
         "pwa.offline",
     }
 )
+
+AUDITED_ENDPOINTS = {
+    "public.station": "station_dashboard",
+    "stations.browse_station": "station_view",
+    "stations.export_station_csv": "csv_download",
+    "stations.download": "raw_download",
+    "api.query": "api_query",
+    "api.download": "api_download",
+}
 
 
 def reject_cross_site_writes():
@@ -105,11 +114,43 @@ def enforce_password_change():
     if request.endpoint in PASSWORD_CHANGE_EXEMPT_ENDPOINTS:
         return None
     user = current_user()
-    if user and int(user.get("force_password_change") or 0) == 1:
+    if user and not session.get("impersonator_username") and int(user.get("force_password_change") or 0) == 1:
         if request.method not in ("GET", "HEAD") or request.path.startswith("/api/"):
             abort(403, "Password change required")
         return redirect(url_for("auth.change_password"))
     return None
+
+
+def record_access_event(response):
+    """Record user-visible data access without logging static assets or polling routes."""
+    endpoint = request.endpoint or ""
+    event_type = AUDITED_ENDPOINTS.get(endpoint)
+    if endpoint == "auth.login" and request.method == "POST":
+        event_type = "login_success" if response.status_code in (301, 302, 303) else "login_failure"
+    elif endpoint == "auth.fast_login" and response.status_code in (301, 302, 303):
+        event_type = "login_success"
+    elif endpoint == "auth.logout":
+        event_type = "logout"
+    if not event_type:
+        return response
+
+    user = getattr(g, "user", None) or current_user()
+    username = str(getattr(g, "audit_username", "") or (user or {}).get("username") or "") or None
+    if event_type == "login_failure":
+        username = str(request.form.get("username", "")).strip() or None
+    station = str((request.view_args or {}).get("instrument_uuid") or request.args.get("station") or "").strip()
+    try:
+        get_store().record_access_event(
+            event_type,
+            username=username,
+            station_uuid=station or None,
+            method=request.method,
+            path=request.path,
+            status_code=response.status_code,
+        )
+    except Exception as error:  # Audit logging must never make the portal unavailable.
+        logger.error("Could not record access event endpoint=%s err=%s", endpoint, error)
+    return response
 
 
 def init_app(app):
@@ -118,3 +159,4 @@ def init_app(app):
     app.before_request(enforce_password_change)
     app.after_request(add_security_headers)
     app.after_request(compress_response)
+    app.after_request(record_access_event)

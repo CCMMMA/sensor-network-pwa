@@ -72,6 +72,16 @@ def _web_settings(raw: dict, storage_root) -> dict:
             '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         ).strip(),
         "base_url": _text(raw, ["baseUrl"], "BASE_URL").strip(),
+        "privacy_controller_name": _text(raw, ["privacyControllerName"], "PRIVACY_CONTROLLER_NAME").strip(),
+        "privacy_controller_contact": _text(raw, ["privacyControllerContact"], "PRIVACY_CONTROLLER_CONTACT").strip(),
+        "privacy_dpo_contact": _text(raw, ["privacyDpoContact"], "PRIVACY_DPO_CONTACT").strip(),
+        "privacy_lawful_basis": _text(raw, ["privacyLawfulBasis"], "PRIVACY_LAWFUL_BASIS").strip(),
+        "privacy_account_retention_days": int(
+            cfg_value(raw, ["privacyAccountRetentionDays"], env_name="PRIVACY_ACCOUNT_RETENTION_DAYS", default=365)
+        ),
+        "privacy_audit_retention_days": int(
+            cfg_value(raw, ["privacyAuditRetentionDays"], env_name="PRIVACY_AUDIT_RETENTION_DAYS", default=365)
+        ),
     }
 
 
@@ -93,6 +103,9 @@ def _smtp_settings(raw: dict) -> dict:
         "smtp_pass": _text(raw, ["smtpPass"], "SMTP_PASS"),
         "smtp_from": _text(raw, ["smtpFrom"], "SMTP_FROM").strip(),
         "smtp_use_tls": use_tls,
+        "smtp_queue_batch_size": int(
+            cfg_value(raw, ["smtpQueueBatchSize"], env_name="SMTP_QUEUE_BATCH_SIZE", default=10)
+        ),
     }
     if settings["smtp_enabled"] and not settings["smtp_from"]:
         raise RuntimeError("SMTP enabled but smtpFrom is missing")

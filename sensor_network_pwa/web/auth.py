@@ -2,7 +2,7 @@
 
 from flask import Blueprint, abort, g, jsonify, redirect, render_template, request, session, url_for
 
-from sensor_network_pwa.mailer import compose_external_url, send_email
+from sensor_network_pwa.mailer import compose_external_url, queue_email
 from sensor_network_pwa.validation import validate_password_strength
 from sensor_network_pwa.web.access import current_user, get_cfg, get_store, login_required
 
@@ -62,7 +62,10 @@ def fast_login():
 
 @bp.route("/logout")
 def logout():
-    session.pop("username", None)
+    user = current_user()
+    if user:
+        g.audit_username = user["username"]
+    session.clear()
     return redirect(url_for("public.index"))
 
 
@@ -100,8 +103,9 @@ def forgot_password():
         if user and user.get("email"):
             token = get_store().create_password_reset_token(user["username"], ttl_minutes=30)
             link = compose_external_url(get_cfg()["base_url"], url_for("auth.reset_password"), {"token": token})
-            send_email(
+            queue_email(
                 get_cfg(),
+                get_store(),
                 [user["email"]],
                 "Sensor Network Collector: password reset",
                 (
@@ -165,16 +169,18 @@ def request_account():
         ok, text = get_store().create_account_request(email, reason)
         if ok:
             msg = text
-            send_email(
+            queue_email(
                 get_cfg(),
+                get_store(),
                 [email],
                 "Sensor Network Collector: registration request received",
                 "Hello,\n\nYour registration request has been received and is pending admin approval.",
             )
             admin_emails = get_store().list_admin_emails()
             if admin_emails:
-                send_email(
+                queue_email(
                     get_cfg(),
+                    get_store(),
                     admin_emails,
                     "Sensor Network Collector: new account request",
                     (

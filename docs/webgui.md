@@ -45,6 +45,8 @@ Set (see [configuration](configuration.md)):
 - `/workflows`, `/api/workflows` node workflow editor and CRUD API
 - `/admin` admin console
 - `/admin/dashboard` admin-only network dashboard
+- `/admin/access-log` admin-only access/download statistics, filters, charts and event table
+- `/admin/access-log/export.csv` CSV export of the filtered access log
 - `/anomalies` anomaly log and silence actions
 - `/profile` user profile: notification time and the user's notifications
 - `/profile/notification-interval`, `/profile/notifications/<id>` (`POST`) profile actions
@@ -128,7 +130,9 @@ returns to the tab it was started from (`/admin#users`, `/admin#stations`,
     data API and API tokens, while the second governs the editor and workflow execution
   - account actions: change the email, assign a strong password (optionally requiring
     another change at next login), ask for or stop asking for a new password, make
-    administrator / regular user, disable / enable the account
+    administrator / regular user, disable / enable the account, or impersonate an
+    active account. An impersonation banner remains visible on every page and returns
+    the administrator to their own session; starts and ends are recorded in the auth DB
 - **Stations**: name, UUID, time of the last data, policy (saved as soon as it is
   changed), how many users have rights, and links to the dashboard, the data browser
   and the chart settings. `Users` opens the same rights table seen from the station:
@@ -136,6 +140,8 @@ returns to the tab it was started from (`/admin#users`, `/admin#stations`,
 - **Account requests**: pending requests with `Approve` and `Reject`. When no email
   can be sent, the onboarding link (valid 48 hours) is shown to the administrator
   after approval so that it can be passed on by other means.
+- **Email queue**: counts emails already sent and still to send, and shows the recent
+  recipients, subjects, attempts, next retry or delivery time, and SMTP errors.
 
 Rules enforced by the server:
 
@@ -515,8 +521,10 @@ form.
 
 On `/profile` every user:
 
-- chooses the notification time from a drop-down list: status changes only (no
-  reminders), 15 or 30 minutes, 1, 2, 3, 6, 12, or 24 hours. The default is 60 minutes
+- chooses the notification time from a drop-down list: no email notifications, status
+  changes only (no reminders), 15 or 30 minutes, 1, 2, 3, 6, 12, or 24 hours. The
+  default is 60 minutes. With email disabled, failures remain visible in the profile,
+  but failure, reminder, and recovery emails are suppressed
 - sees the list of their notifications and, for each one, can:
   - **Acknowledge**: no more reminders for that failure; the recovery is still notified
   - **Snooze** (1, 4, 8, or 24 hours): reminders pause and then resume
@@ -524,6 +532,10 @@ On `/profile` every user:
 
 These actions affect only the user's own emails. A user without an email address still
 gets the list. If an email cannot be sent, it is retried at the next scan.
+Notification delivery is claimed atomically in the auth database, so watchdog
+containers that briefly overlap during a restart do not send duplicate failures or
+reminders. An abandoned claim expires after five minutes if a watchdog stops before
+delivery.
 
 ## Branding and logos
 
@@ -600,12 +612,19 @@ The auth database now stores:
 - login and password-reset tokens
 - anomalies and anomaly silence windows
 - per-user notification time and notifications
+- administrator impersonation start/end audit events
+- user sign-in, station access, query and data-download audit events
 - station logos
 - per-station public chart settings
 
 ## Built-in protections
 
 - the session cookie is `HttpOnly` and `SameSite=Lax`
+- a first-visit cookie banner offers equally accessible accept, reject, and close controls;
+  reject/close preserves the necessary-only default, the choice lasts 180 days, and the
+  footer's **Review cookie choices** control makes consent as easy to withdraw as to give
+- every page footer offers **Day theme** and **Night theme**; the first visit follows the
+  device colour preference and an explicit choice is remembered for one year
 - state-changing `POST`, `PUT`, and `DELETE` requests whose `Origin` (or `Referer`)
   names a host other than the request host, the forwarded host, or the `baseUrl` host
   are rejected with `403 Cross-site request rejected`; set `baseUrl` to the URL users

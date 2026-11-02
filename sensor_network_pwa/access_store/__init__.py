@@ -4,8 +4,10 @@ chart settings and the generated session secret.
 Each concern is a mixin over StoreBase; AccessStore combines them.
 """
 
+from sensor_network_pwa.access_store.access_events import AccessEventsMixin
 from sensor_network_pwa.access_store.account_requests import AccountRequestsMixin
 from sensor_network_pwa.access_store.anomalies import AnomaliesMixin
+from sensor_network_pwa.access_store.email_queue import EmailQueueMixin
 from sensor_network_pwa.access_store.notifications import (
     DEFAULT_NOTIFICATION_INTERVAL_MIN,
     NOTIFICATION_INTERVAL_CHOICES,
@@ -29,6 +31,8 @@ __all__ = [
 
 
 class AccessStore(
+    AccessEventsMixin,
+    EmailQueueMixin,
     AccountRequestsMixin,
     TokensMixin,
     NotificationsMixin,

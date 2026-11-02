@@ -5,6 +5,30 @@ from email.message import EmailMessage
 from urllib.parse import urlencode
 
 from sensor_network_pwa.log import logger
+from sensor_network_pwa.timeutil import utc_now
+
+
+def queue_email(cfg: dict, store, recipients, subject: str, body_text: str):
+    """Add an email to the persistent queue when SMTP is configured."""
+    if not cfg.get("smtp_enabled") or not str(cfg.get("smtp_host", "") or "").strip():
+        logger.info("SMTP disabled; skipped queued email subject=%s", subject)
+        return False
+    return store.enqueue_email(recipients, " ".join(str(subject).split()), body_text, utc_now())
+
+
+def drain_email_queue(cfg: dict, store, deliver=None, now=None):
+    """Deliver one rate-limited batch and leave failures queued for retry."""
+    deliver = deliver or send_email
+    now = now or utc_now()
+    batch_size = max(1, min(int(cfg.get("smtp_queue_batch_size", 10)), 100))
+    delivered = 0
+    for item in store.claim_queued_emails(now, batch_size):
+        if deliver(cfg, item["recipients"], item["subject"], item["body_text"]):
+            store.finish_queued_email(item["id"], now)
+            delivered += 1
+        else:
+            store.retry_queued_email(item["id"], item["attempts"], "SMTP delivery failed", now)
+    return delivered
 
 
 def send_email(cfg: dict, recipients, subject: str, body_text: str):

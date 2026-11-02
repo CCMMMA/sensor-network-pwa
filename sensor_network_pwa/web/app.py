@@ -1,5 +1,7 @@
 """Flask application factory."""
 
+from urllib.parse import urlsplit
+
 from flask import Flask
 
 from sensor_network_pwa.access_store import AccessStore
@@ -30,6 +32,8 @@ def create_web_app(cfg: dict, access_store: AccessStore) -> Flask:
     app.config.update(
         SECRET_KEY=_session_secret(cfg, access_store),
         SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SECURE=urlsplit(cfg.get("base_url", "")).scheme.lower() == "https",
         MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES,
     )
     app.config[CONFIG_KEY] = cfg

@@ -1,12 +1,27 @@
-"""User profile and failure-notification preferences."""
+"""User profile, privacy rights and failure-notification preferences."""
 
-from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
+import json
+
+from flask import Blueprint, Response, abort, flash, g, redirect, render_template, request, url_for
 
 from sensor_network_pwa.access_store import NOTIFICATION_INTERVAL_CHOICES, NOTIFICATION_SNOOZE_HOURS
 from sensor_network_pwa.timeutil import parse_iso_ts, utc_now
 from sensor_network_pwa.web.access import get_store, login_required, station_is_accessible
 
 bp = Blueprint("profile", __name__)
+
+
+@bp.get("/profile/personal-data.json")
+@login_required
+def personal_data_export():
+    """Provide the authenticated data subject with a portable copy of account data."""
+    username = g.user["username"]
+    payload = get_store().export_personal_data(username)
+    body = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    response = Response(body, mimetype="application/json")
+    response.headers["Content-Disposition"] = f'attachment; filename="{username}-personal-data.json"'
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def profile_done(ok: bool, message: str):

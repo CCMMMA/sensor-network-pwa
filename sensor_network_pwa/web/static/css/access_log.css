@@ -1,0 +1,4 @@
+.access-log-page { max-width: 1600px; }
+.access-log-page .chart-box { height: 18rem; position: relative; }
+.access-log-page .uuid { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.access-log-page code { white-space: nowrap; }

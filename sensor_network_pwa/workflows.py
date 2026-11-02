@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sensor_network_pwa.mailer import send_email
+from sensor_network_pwa.mailer import queue_email
 from sensor_network_pwa.storage import load_station_rows, to_float
 from sensor_network_pwa.timeutil import utc_iso, utc_now
 from sensor_network_pwa.validation import is_valid_email
@@ -129,8 +129,9 @@ def run_workflows(cfg: dict, store, storage_root: str, now: datetime | None = No
                     f"on {', '.join(matched_stations[src['id']])}"
                     for src in sources
                 )
-                sent = send_email(
+                sent = queue_email(
                     cfg,
+                    store,
                     [node["data"]["recipient"]],
                     f"[Sensor Network] Workflow fired: {workflow['name']}",
                     f"Workflow: {workflow['name']}\nCondition: {details}\nFired at: {utc_iso(now)}\n",

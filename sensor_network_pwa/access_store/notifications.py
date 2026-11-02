@@ -8,6 +8,7 @@ from sensor_network_pwa.timeutil import utc_iso, utc_now
 # Minutes between reminder emails while a failure persists; 0 sends status changes only.
 DEFAULT_NOTIFICATION_INTERVAL_MIN = 60
 NOTIFICATION_INTERVAL_CHOICES = (
+    (-1, "No email notifications"),
     (0, "Status changes only (no reminders)"),
     (15, "Every 15 minutes"),
     (30, "Every 30 minutes"),
@@ -20,6 +21,7 @@ NOTIFICATION_INTERVAL_CHOICES = (
 )
 NOTIFICATION_SNOOZE_HOURS = (1, 4, 8, 24)
 NOTIFICATION_LINK_TTL_MIN = 60
+NOTIFICATION_CLAIM_TTL_MIN = 5
 
 
 def normalize_notification_interval(value):
@@ -87,10 +89,41 @@ class NotificationsMixin(PermissionsMixin):
 
     def mark_notifications_sent(self, notification_ids, now: datetime, recovery: bool = False):
         column = "recovery_sent_at" if recovery else "last_sent_at"
+        claim_column = "recovery_claimed_at" if recovery else "send_claimed_at"
         with self._lock, self._connect() as con:
             con.executemany(
-                f"UPDATE notifications SET {column} = ? WHERE id = ?",
+                f"UPDATE notifications SET {column} = ?, {claim_column} = NULL WHERE id = ?",
                 [(utc_iso(now), notification_id) for notification_id in notification_ids],
+            )
+
+    def claim_notification_send(self, notification_id: int, now: datetime, recovery: bool = False) -> bool:
+        """Atomically lease one due email to a watchdog process.
+
+        A lease prevents overlapping watchdog containers from both sending the
+        same event. It expires so a process crash before SMTP delivery does not
+        suppress the notification permanently.
+        """
+        claim_column = "recovery_claimed_at" if recovery else "send_claimed_at"
+        stale_before = utc_iso(now - timedelta(minutes=NOTIFICATION_CLAIM_TTL_MIN))
+        with self._lock, self._connect() as con:
+            cur = con.execute(
+                f"""
+                UPDATE notifications
+                SET {claim_column} = ?
+                WHERE id = ?
+                  AND ({claim_column} IS NULL OR {claim_column} <= ?)
+                """,
+                (utc_iso(now), notification_id, stale_before),
+            )
+        return cur.rowcount == 1
+
+    def release_notification_claims(self, notification_ids, recovery: bool = False):
+        """Release leases after SMTP failure so the next scan can retry."""
+        claim_column = "recovery_claimed_at" if recovery else "send_claimed_at"
+        with self._lock, self._connect() as con:
+            con.executemany(
+                f"UPDATE notifications SET {claim_column} = NULL WHERE id = ?",
+                [(notification_id,) for notification_id in notification_ids],
             )
 
     def list_pending_recovery_notifications(self, resolved_since: datetime):
@@ -104,10 +137,11 @@ class NotificationsMixin(PermissionsMixin):
                 JOIN users u ON u.username = n.username
                 WHERE a.status = 'resolved' AND a.resolved_at >= ?
                   AND n.last_sent_at IS NOT NULL AND n.recovery_sent_at IS NULL AND n.cleared_at IS NULL
+                  AND COALESCE(u.notify_interval_min, ?) <> -1
                   AND u.active = 1 AND u.email IS NOT NULL AND u.email <> ''
                 ORDER BY n.id
                 """,
-                (utc_iso(resolved_since),),
+                (utc_iso(resolved_since), DEFAULT_NOTIFICATION_INTERVAL_MIN),
             ).fetchall()
         return [dict(r) for r in rows]
 

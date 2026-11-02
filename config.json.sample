@@ -19,6 +19,12 @@
   "mapTileAttribution": "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors",
   "authDbPath": "/tmp/sensor-network-collector/collector_auth.sqlite",
   "webSessionSecret": "replace-with-a-strong-random-secret",
+  "privacyControllerName": "Replace with the legal name of the data controller",
+  "privacyControllerContact": "privacy@example.org",
+  "privacyDpoContact": "",
+  "privacyLawfulBasis": "Replace with the documented Article 6 legal basis and processing purpose",
+  "privacyAccountRetentionDays": 365,
+  "privacyAuditRetentionDays": 365,
   "adminUser": "admin",
   "adminPassword": "change-me-now",
   "smtpEnabled": false,
@@ -28,6 +34,7 @@
   "smtpPass": "replace-with-smtp-password",
   "smtpFrom": "collector@example.com",
   "smtpUseTls": true,
+  "smtpQueueBatchSize": 10,
   "watchdogIntervalSec": 60,
   "signalkPathMap": {
     "SoilMoisture": {

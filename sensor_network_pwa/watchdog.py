@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from sensor_network_pwa.access_store import NOTIFICATION_LINK_TTL_MIN, AccessStore
 from sensor_network_pwa.anomalies import anomaly_base_type, evaluate_station_anomalies
 from sensor_network_pwa.log import logger
-from sensor_network_pwa.mailer import compose_external_url, send_email
+from sensor_network_pwa.mailer import compose_external_url, drain_email_queue, queue_email, send_email
 from sensor_network_pwa.storage import collect_instruments, load_station_rows
 from sensor_network_pwa.timeutil import parse_iso_ts, utc_now
 from sensor_network_pwa.workflows import run_workflows
@@ -15,15 +15,17 @@ from sensor_network_pwa.workflows import run_workflows
 def run_watchdog_loop(cfg: dict, access_store: AccessStore, stop_event: threading.Event):
     storage_root = cfg.get("storage_root")
     if not storage_root:
-        logger.info("Watchdog disabled: storage is not configured")
-        return
+        logger.info("Anomaly watchdog disabled: storage is not configured; email queue remains active")
 
     interval = max(10, int(cfg.get("watchdog_interval_sec", 60)))
     logger.info("Watchdog started (interval=%ss)", interval)
 
     while not stop_event.is_set():
         try:
-            run_watchdog_scan(cfg, access_store, storage_root)
+            if storage_root:
+                run_watchdog_scan(cfg, access_store, storage_root)
+            else:
+                drain_email_queue(cfg, access_store, deliver=send_email)
         except Exception:
             logger.exception("Watchdog scan failed; retrying in %ss", interval)
         stop_event.wait(interval)
@@ -111,16 +113,18 @@ def send_watchdog_notifications(cfg: dict, access_store: AccessStore, failing, n
             continue
         for user in users:
             notification = notifications.get(user["username"])
-            if not user["email"] or notification is None:
+            if not user["email"] or notification is None or user["interval_min"] < 0:
                 continue
             kind = notification_due(notification, user["interval_min"], now)
-            if kind:
+            if kind and access_store.claim_notification_send(notification["id"], now):
                 entry = outbox.setdefault(user["username"], {"email": user["email"], "events": []})
                 entry["events"].append({**anomaly, "kind": kind, "notification_id": notification["id"]})
     if not emailing:
         return
 
     for row in access_store.list_pending_recovery_notifications(now - timedelta(hours=24)):
+        if not access_store.claim_notification_send(row["id"], now, recovery=True):
+            continue
         entry = outbox.setdefault(row["username"], {"email": row["email"], "events": []})
         entry["events"].append({**row, "kind": "recovery", "notification_id": row["id"]})
 
@@ -130,7 +134,11 @@ def send_watchdog_notifications(cfg: dict, access_store: AccessStore, failing, n
         subject, body = build_notification_email(
             cfg, entry["events"], access_store.get_notification_interval(username), login_link
         )
-        if not send_email(cfg, [entry["email"]], subject, body):
+        if not queue_email(cfg, access_store, [entry["email"]], subject, body):
+            for recovery in (False, True):
+                ids = [e["notification_id"] for e in entry["events"] if (e["kind"] == "recovery") == recovery]
+                if ids:
+                    access_store.release_notification_claims(ids, recovery=recovery)
             continue
         for recovery in (False, True):
             ids = [e["notification_id"] for e in entry["events"] if (e["kind"] == "recovery") == recovery]
@@ -175,3 +183,4 @@ def run_watchdog_scan(cfg: dict, access_store: AccessStore, storage_root: str, n
 
     send_watchdog_notifications(cfg, access_store, failing, now)
     run_workflows(cfg, access_store, storage_root, now)
+    drain_email_queue(cfg, access_store, deliver=send_email, now=now)

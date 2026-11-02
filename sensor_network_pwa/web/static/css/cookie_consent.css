@@ -1,0 +1,22 @@
+.cookie-consent-banner {
+  position: fixed;
+  z-index: 3000;
+  right: 1rem;
+  bottom: 1rem;
+  left: 1rem;
+  max-width: 44rem;
+  padding: 1.25rem;
+  border: 1px solid #6c757d;
+  border-radius: .5rem;
+  background: var(--bs-body-bg);
+  box-shadow: 0 .5rem 1.5rem rgba(0, 0, 0, .3);
+  color: var(--bs-body-color);
+}
+.cookie-consent-close {
+  position: absolute;
+  top: .75rem;
+  right: .75rem;
+}
+@media (min-width: 48rem) {
+  .cookie-consent-banner { left: auto; }
+}

@@ -18,6 +18,7 @@ from sensor_network_pwa.config import load_config
 from sensor_network_pwa.dashboard import build_public_station_snapshot
 from sensor_network_pwa.influx import init_influx_runtime
 from sensor_network_pwa.log import logger
+from sensor_network_pwa.mailer import drain_email_queue, queue_email
 from sensor_network_pwa.runtime import runtime
 from sensor_network_pwa.storage import iter_csv_files_newest_first, iter_csv_rows, load_station_rows, to_float
 from sensor_network_pwa.watchdog import run_watchdog_scan
@@ -120,7 +121,54 @@ class WebAndAuthTests(unittest.TestCase):
     def test_session_cookie_and_security_headers(self):
         response = self.app.test_client().post("/login", data={"username": "bob", "password": STRONG})
         self.assertIn("SameSite=Lax", response.headers["Set-Cookie"])
+        self.assertIn("HttpOnly", response.headers["Set-Cookie"])
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+
+    def test_https_base_url_marks_session_cookie_secure(self):
+        app = create_web_app(dict(self.cfg, base_url="https://portal.example.org"), self.store)
+        response = app.test_client().post("/login", data={"username": "bob", "password": STRONG})
+        self.assertIn("Secure", response.headers["Set-Cookie"])
+
+    def test_privacy_notice_and_personal_data_export(self):
+        notice = self.app.test_client().get("/privacy")
+        self.assertEqual(notice.status_code, 200)
+        self.assertIn(b"Privacy and data protection", notice.data)
+        response = self.client("bob").get("/profile/personal-data.json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        payload = response.json
+        self.assertEqual(payload["account"]["username"], "bob")
+        self.assertNotIn("password_hash", payload["account"])
+        self.assertIn("api_tokens", payload)
+
+    def test_cookie_banner_is_active_and_preferences_are_revisitable(self):
+        page = self.app.test_client().get("/").get_data(as_text=True)
+        self.assertIn('id="cookieConsentBanner"', page)
+        self.assertIn('id="cookieConsentReject"', page)
+        self.assertIn('id="cookieConsentAccept"', page)
+        self.assertIn('id="cookieConsentClose"', page)
+        self.assertIn('id="cookieConsentReview"', page)
+        self.assertIn("js/cookie_consent.js", page)
+        script_response = self.app.test_client().get("/static/js/cookie_consent.js")
+        script = script_response.get_data(as_text=True)
+        script_response.close()
+        self.assertIn("max-age=${MAX_AGE}", script)
+        self.assertIn("save('rejected')", script)
+
+    def test_day_and_night_theme_selector_is_available_on_every_page(self):
+        for path in ("/", "/privacy", "/login"):
+            with self.subTest(path=path):
+                page = self.app.test_client().get(path).get_data(as_text=True)
+                self.assertIn('id="themePreference"', page)
+                self.assertIn('value="light">Day theme', page)
+                self.assertIn('value="dark">Night theme', page)
+                self.assertIn("js/theme.js", page)
+        response = self.app.test_client().get("/static/js/theme.js")
+        script = response.get_data(as_text=True)
+        response.close()
+        self.assertIn("prefers-color-scheme: dark", script)
+        self.assertIn("dataset.bsTheme", script)
+        self.assertIn("theme_preference", script)
 
     def test_password_change_requires_strong_password(self):
         client = self.client("bob")
@@ -292,6 +340,54 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertIn("BACK TO REGULAR", sent[0][1])
         self.assertEqual(self.scan_with_mail(back + 7 * minute), [])
 
+    def test_overlapping_watchdogs_claim_each_email_once(self):
+        start = self.now + timedelta(hours=1)
+        sent = []
+
+        def nested_send(cfg, recipients, subject, body):
+            sent.append(subject)
+            # Simulate a replacement container scanning before the first one
+            # has finished SMTP delivery and recorded last_sent_at.
+            if len(sent) == 1:
+                run_watchdog_scan(cfg, self.store, self.cfg["storage_root"], now=start)
+            return True
+
+        cfg = dict(self.cfg, smtp_enabled=True, smtp_host="smtp.example.org")
+        with patch("sensor_network_pwa.watchdog.send_email", nested_send):
+            run_watchdog_scan(cfg, self.store, self.cfg["storage_root"], now=start)
+
+        self.assertEqual(len(sent), 1)
+
+    def test_failed_email_releases_claim_for_next_scan(self):
+        start = self.now + timedelta(hours=1)
+        cfg = dict(self.cfg, smtp_enabled=True, smtp_host="smtp.example.org")
+        with patch("sensor_network_pwa.watchdog.send_email", return_value=False):
+            run_watchdog_scan(cfg, self.store, self.cfg["storage_root"], now=start)
+        self.assertEqual(len(self.scan_with_mail(start + timedelta(minutes=1))), 1)
+
+    def test_email_queue_rate_limits_delivery_and_reports_admin_status(self):
+        cfg = dict(self.cfg, smtp_enabled=True, smtp_host="smtp.example.org", smtp_queue_batch_size=2)
+        for number in range(3):
+            self.assertTrue(queue_email(cfg, self.store, [f"user{number}@example.org"], f"Mail {number}", "Body"))
+        delivered = []
+
+        def deliver(_cfg, recipients, subject, _body):
+            delivered.append((recipients, subject))
+            return True
+
+        drain_email_queue(
+            cfg,
+            self.store,
+            deliver=deliver,
+            now=self.now,
+        )
+        self.assertEqual(len(delivered), 2)
+        summary = self.store.email_queue_summary()
+        self.assertEqual(summary["counts"], {"pending": 1, "sent": 2})
+        page = self.client("admin").get("/admin").get_data(as_text=True)
+        self.assertIn("Emails still to send", page)
+        self.assertIn("Mail 2", page)
+
     def test_notification_actions_stop_reminders(self):
         hour = timedelta(hours=1)
         start = self.now + hour
@@ -326,6 +422,20 @@ class WebAndAuthTests(unittest.TestCase):
         bob.post(f"/profile/notifications/{own}", data={"action": "clear"})
         self.assertEqual(self.store.list_notifications_for_user("bob"), [])
         self.assertNotIn(b"lost_connectivity", bob.get("/profile").data)
+
+    def test_no_notifications_suppresses_email_but_keeps_in_app_records(self):
+        start = self.now + timedelta(hours=1)
+        self.assertTrue(self.store.set_notification_interval("bob", -1)[0])
+        self.assertEqual(self.scan_with_mail(start), [])
+        notifications = self.store.list_notifications_for_user("bob")
+        self.assertEqual(len(notifications), 1)
+        self.assertIsNone(notifications[0]["last_sent_at"])
+        page = self.client("bob").get("/profile")
+        self.assertIn(b'<option value="-1" selected>', page.data)
+
+        # Enabling email while the failure remains active reports its current state.
+        self.assertTrue(self.store.set_notification_interval("bob", 720)[0])
+        self.assertEqual(len(self.scan_with_mail(start + timedelta(minutes=1))), 1)
 
     def test_notification_email_logs_in_to_the_profile_page(self):
         sent = self.scan_with_mail(self.now + timedelta(hours=1))
@@ -758,6 +868,28 @@ class WebAndAuthTests(unittest.TestCase):
         admin.post("/admin/force-password", data={"username": "bob", "force": "0"})
         self.assertEqual(self.store.get_user("bob")["force_password_change"], 0)
 
+    def test_admin_can_impersonate_user_and_return(self):
+        admin = self.client("admin")
+        response = admin.post("/admin/impersonate", data={"username": "bob"})
+        self.assertEqual(response.headers["Location"], "/")
+        profile = admin.get("/profile").get_data(as_text=True)
+        self.assertIn("Impersonating <b>bob</b>", profile)
+        self.assertIn("bob@example.org", profile)
+        self.assertEqual(admin.get("/admin").status_code, 403)
+
+        response = admin.post("/impersonation/stop")
+        self.assertEqual(response.headers["Location"], "/admin")
+        self.assertEqual(admin.get("/admin").status_code, 200)
+        events = list(reversed(self.store.list_impersonation_events()))
+        self.assertEqual([event["action"] for event in events], ["started", "ended"])
+        self.assertTrue(all(event["admin_username"] == "admin" for event in events))
+        self.assertTrue(all(event["target_username"] == "bob" for event in events))
+
+    def test_non_admin_cannot_start_or_forge_impersonation(self):
+        bob = self.client("bob")
+        self.assertEqual(bob.post("/admin/impersonate", data={"username": "admin"}).status_code, 403)
+        self.assertEqual(bob.post("/impersonation/stop").status_code, 403)
+
     def test_admin_can_set_user_password(self):
         admin = self.client("admin")
         new_password = "Adm1n!AssignedPassword"
@@ -1020,13 +1152,13 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertEqual(len(client.get("/api/workflows").json["workflows"]), 1)
         sent = []
         cfg = dict(self.cfg, smtp_enabled=True, smtp_host="smtp.example.org")
-        with patch("sensor_network_pwa.workflows.send_email", side_effect=lambda *args: sent.append(args) or True):
+        with patch("sensor_network_pwa.workflows.queue_email", side_effect=lambda *args: sent.append(args) or True):
             run_workflows(cfg, self.store, self.cfg["storage_root"], self.now)
             run_workflows(cfg, self.store, self.cfg["storage_root"], self.now + timedelta(minutes=1))
         self.assertEqual(len(sent), 1)
-        self.assertEqual(sent[0][1], ["alerts@example.org"])
-        self.assertIn("on station", sent[0][3])
-        self.assertNotIn("cool-station", sent[0][3])
+        self.assertEqual(sent[0][2], ["alerts@example.org"])
+        self.assertIn("on station", sent[0][4])
+        self.assertNotIn("cool-station", sent[0][4])
         self.assertEqual(client.delete(f"/api/workflows/{workflow_id}").status_code, 204)
 
     def test_workflow_rejects_unreadable_station_and_invalid_email(self):
@@ -1066,6 +1198,29 @@ class WebAndAuthTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertFalse(self.store.get_user("bob")["can_workflows"])
+
+    def test_admin_access_log_records_filters_and_exports_activity(self):
+        user = self.client("bob")
+        self.assertEqual(user.get("/station/station").status_code, 200)
+        export = user.get("/station/station/export.csv?interval=hour")
+        self.assertEqual(export.status_code, 200)
+        export.close()
+        self.assertEqual(user.get("/logout").status_code, 302)
+
+        events = self.store.list_access_events(username="bob", limit=20)
+        event_types = {item["event_type"] for item in events}
+        self.assertTrue({"login_success", "station_view", "csv_download", "logout"} <= event_types)
+
+        self.assertEqual(self.client("bob").get("/admin/access-log").status_code, 403)
+        admin = self.client("admin")
+        page = admin.get("/admin/access-log?username=bob&event_type=csv_download")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Access log and statistics", page.get_data(as_text=True))
+        csv_response = admin.get("/admin/access-log/export.csv?username=bob&event_type=csv_download")
+        self.assertEqual(csv_response.mimetype, "text/csv")
+        rows = list(csv.DictReader(io.StringIO(csv_response.get_data(as_text=True))))
+        self.assertEqual([row["event"] for row in rows], ["csv_download"])
+        self.assertEqual(rows[0]["station"], "station")
 
     def test_config_needs_no_collector_settings(self):
         self.assertFalse(self.cfg["enable_influx"])

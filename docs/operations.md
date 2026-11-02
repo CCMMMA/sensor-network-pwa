@@ -33,7 +33,10 @@ edge-triggered execution.
 ## Backup and restore
 
 The SQLite database holds account data, hashed API tokens, workflows, workflow firing state, permissions,
-and anomaly/notification state; the configuration holds secrets. Keep both private.
+anomaly/notification state, the outgoing email queue, administrator impersonation audit events, and the
+user access/download log; the configuration holds secrets. Administrators can inspect and export that log at
+`/admin/access-log`.
+Keep both private.
 For a consistent copy, stop the web and watchdog services (and the collector,
 for the CSV files) before archiving the data directory, then start them again. An image
 rollback does not roll back the SQLite schema.
@@ -49,6 +52,7 @@ rollback does not roll back the SQLite schema.
 | Every page redirects to `/change-password` | The account is flagged for a password change (sample admin password, or forced by an admin); it is lifted once a strong password is saved. |
 | `logLevel` seems ignored | It is applied by both `main.py` and `webapp_wsgi.py`; a `logLevel` key in the config file takes precedence over the `LOG_LEVEL` environment variable. |
 | No watchdog notifications | Check that one watchdog process runs, `pathStorage`, SMTP settings, the user's email address, alarm silencing, and whether the user acknowledged, snoozed, or cleared the notification on `/profile`. A failed scan is logged as `Watchdog scan failed` or `Watchdog check failed for station=...` and retried at the next interval. |
+| Duplicate watchdog notifications after restart | Upgrade to a version with database-backed notification claims, verify that web and watchdog use the same persistent `authDbPath`, and still keep exactly one steady-state watchdog process. |
 | Workflow editor/API returns `403` | Workflow routes require `Can workflows`; data routes require `Can API`, unless the account is an administrator. The referenced station must also grant Browse access; `/api/download` requires Download access. A forced password change blocks requests too. |
 | Bearer request returns `401` | Check the `Authorization: Bearer ...` syntax, token expiry/revocation, and that its owner is active and still has `Can API`. The full secret cannot be recovered; create a replacement token. |
 | A workflow does not send email | Check that it is enabled, its owner is active and retains `Can workflows` and Browse access, exactly one watchdog runs, SMTP is configured, and the condition changed from false to true. Inspect `last_error` through `GET /api/workflows`. |

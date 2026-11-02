@@ -13,6 +13,57 @@ WEAK_ADMIN_PASSWORDS = frozenset({"admin", "change-me", "change-me-now", "replac
 
 
 class UsersMixin(StoreBase):
+    def export_personal_data(self, username: str) -> dict:
+        """Return personal data directly associated with one account, excluding secrets."""
+        username = username.strip()
+        queries: dict[str, tuple[str, int]] = {
+            "account": (
+                "SELECT username,email,role,active,created_at,notify_interval_min FROM users WHERE username=?",
+                1,
+            ),
+            "station_permissions": (
+                "SELECT instrument_uuid,can_browse,can_download FROM user_instruments "
+                "WHERE username=? ORDER BY instrument_uuid",
+                1,
+            ),
+            "station_controls": (
+                "SELECT station_uuid FROM user_station_controls WHERE username=? ORDER BY station_uuid",
+                1,
+            ),
+            "api_tokens": (
+                "SELECT id,name,token_prefix,created_at,updated_at,last_used_at,expires_at "
+                "FROM api_tokens WHERE username=? ORDER BY id",
+                1,
+            ),
+            "workflows": (
+                "SELECT id,name,enabled,graph_json,created_at,updated_at,last_run_at,last_error "
+                "FROM workflows WHERE username=? ORDER BY id",
+                1,
+            ),
+            "notifications": (
+                "SELECT anomaly_id,created_at,last_sent_at,recovery_sent_at,acknowledged_at,"
+                "snoozed_until,cleared_at FROM notifications WHERE username=? ORDER BY id",
+                1,
+            ),
+            "access_events": (
+                "SELECT event_type,station_uuid,method,path,status_code,created_at "
+                "FROM access_events WHERE username=? ORDER BY id",
+                1,
+            ),
+            "impersonation_events": (
+                "SELECT admin_username,target_username,action,created_at FROM impersonation_events "
+                "WHERE admin_username=? OR target_username=? ORDER BY id",
+                2,
+            ),
+        }
+        result: dict[str, object] = {}
+        with self._connect() as con:
+            for key, (sql, parameter_count) in queries.items():
+                params = (username,) * parameter_count
+                rows = [dict(row) for row in con.execute(sql, params).fetchall()]
+                result[key] = (rows[0] if rows else None) if key == "account" else rows
+        return result
+
     def ensure_admin(self, username: str, password: str):
         readonly_message = (
             f"Cannot initialize admin user: auth DB is read-only ({self.db_path}). "
@@ -55,6 +106,25 @@ class UsersMixin(StoreBase):
                 "FROM users ORDER BY username"
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def record_impersonation_event(self, admin_username: str, target_username: str, action: str):
+        """Persist the start or end of an administrator impersonation session."""
+        if action not in ("started", "ended"):
+            raise ValueError("Unknown impersonation action")
+        with self._lock, self._connect() as con:
+            con.execute(
+                "INSERT INTO impersonation_events(admin_username,target_username,action,created_at) VALUES(?,?,?,?)",
+                (admin_username, target_username, action, now_utc_iso()),
+            )
+
+    def list_impersonation_events(self, limit: int = 100):
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT admin_username,target_username,action,created_at "
+                "FROM impersonation_events ORDER BY id DESC LIMIT ?",
+                (max(1, min(int(limit), 1000)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def find_active_user_by_identity(self, identity: str):
         identity = identity.strip()

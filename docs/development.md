@@ -30,10 +30,10 @@ python -m unittest discover -s tests -v
 
 `tests/test_web_and_auth.py` uses temporary files only; no collector, broker, InfluxDB,
 or SMTP server is needed. It covers configuration loading without collector settings,
-login redirects, anomaly log access, HTML/script escaping, cross-site write rejection,
+login redirects, anomaly and access-log access, HTML/script escaping, cross-site write rejection,
 cookie and response headers, password policy, single-use tokens, default-admin
 handling, sandboxed logo serving, download cleanup, limited row loading, non-finite
-values, watchdog resilience, failure notifications (status changes, reminders, profile
+values, watchdog resilience, failure notifications (disabled email, status changes, reminders, profile
 actions, login link), enforced password changes, rows longer than the CSV
 header, map popup escaping, session-secret fallback, the onboarding-only username
 check, email validation of account requests, hiding of restricted stations, selection

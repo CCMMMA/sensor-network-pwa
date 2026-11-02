@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Privacy and data protection{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('public.index') }}">Home</a></p>
+<h1 class="h3">Privacy and data protection</h1>
+{% if not cfg.privacy_controller_name or not cfg.privacy_controller_contact or not cfg.privacy_lawful_basis %}
+<div class="alert alert-warning" role="alert">The operator has not completed all mandatory privacy-notice details. Do not use this deployment for personal data until they are configured.</div>
+{% endif %}
+<h2 class="h5">Controller and contact</h2>
+<p><b>Controller:</b> {{ cfg.privacy_controller_name or 'Not configured' }}<br>
+<b>Privacy contact:</b> {{ cfg.privacy_controller_contact or 'Not configured' }}{% if cfg.privacy_dpo_contact %}<br><b>Data protection officer:</b> {{ cfg.privacy_dpo_contact }}{% endif %}</p>
+<h2 class="h5">Data, purposes, and legal basis</h2>
+<p>This portal processes account identifiers, email addresses, credentials in hashed form, permissions, notification preferences, workflows, security and access audit records, and messages submitted with account requests. It does so to authenticate users, authorize sensor-data access, deliver requested operational notifications, secure and administer the service, and demonstrate accountable access.</p>
+<p><b>Legal basis selected by the controller:</b> {{ cfg.privacy_lawful_basis or 'Not configured' }}.</p>
+<p>Sensor readings may themselves be personal data when they identify or can be linked to a person or location. The controller is responsible for documenting the purpose and legal basis for each station dataset before publishing it.</p>
+<h2 class="h5">Recipients, transfers, and storage</h2>
+<p>Data is available only to authorized portal administrators and users according to station policy. Email delivery exposes the recipient address and message to the configured mail provider; map tiles and Bootstrap assets are currently requested from their configured third-party hosts. The controller must identify those providers, execute any required processor agreements, and document any transfer outside the EEA.</p>
+<p>Account-related records are scheduled for review after {{ cfg.privacy_account_retention_days }} days; access/audit records after {{ cfg.privacy_audit_retention_days }} days. Legal holds and security obligations may require a documented exception.</p>
+<h2 class="h5" id="cookies">Cookies and browser storage</h2>
+<p>The portal uses necessary cookies for the signed login session, security, display preferences (including the Day/Night theme), and recording your cookie choice. Necessary cookies remain active when optional cookies are rejected. The choice cookie lasts 180 days; theme and station display preferences can last up to one year; the browser session cookie expires according to the session configuration. The portal does not set advertising cookies.</p>
+<p>The application does not currently install advertising or analytics cookies. Rejecting or closing the banner records the necessary-only default and does not prevent use of the portal. If the operator later integrates optional cookie-based features, they must remain disabled until an affirmative choice. Use “Review cookie choices” in every page footer to withdraw or change the choice at any time.</p>
+<h2 class="h5">Your rights</h2>
+<p>Subject to the GDPR's conditions and exceptions, you may request access, rectification, erasure, restriction, portability, or object to processing. Logged-in users can download an account-data copy from their profile. Contact the controller above for other requests. You may also lodge a complaint with the competent supervisory authority.</p>
+<h2 class="h5">Security and automated decisions</h2>
+<p>The portal uses access controls, hashed passwords and API-token secrets, single-use reset/onboarding tokens, secure response headers, audit events, and encrypted transport when deployed behind HTTPS. It does not make decisions producing legal or similarly significant effects solely by automated processing.</p>
+<p class="text-muted small">Notice version: 2026-11-02.</p>
+{% endblock %}

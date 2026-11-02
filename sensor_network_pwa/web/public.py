@@ -46,6 +46,12 @@ def workflows_api_documentation():
     return render_template("public/documentation.html", content=content)
 
 
+@bp.get("/privacy")
+def privacy_notice():
+    """Human-readable information about the portal's personal-data processing."""
+    return render_template("public/privacy.html", cfg=get_cfg())
+
+
 @bp.route("/assets/<kind>/<path:name>")
 def asset_file(kind: str, name: str):
     if kind == "app":

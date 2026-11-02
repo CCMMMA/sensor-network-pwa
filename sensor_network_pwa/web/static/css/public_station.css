@@ -42,10 +42,10 @@ html, body { min-height: 100%; overflow-y: auto; }
 .chart-card.fullscreen .fullscreen-hint { display: none; }
 .chart-card .fullscreen-hint { font-size: .72rem; color: #6c757d; }
 .stat-chip {
-  border: 1px solid #dee2e6;
+  border: 1px solid var(--bs-border-color);
   border-radius: .5rem;
   padding: .5rem .65rem;
-  background: #fff;
+  background: var(--bs-body-bg);
 }
 .stat-chip-grid {
   display: grid;

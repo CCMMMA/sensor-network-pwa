@@ -1,6 +1,7 @@
 # Documentation
 
 - [Configuration](configuration.md): storage location, web access, InfluxDB reads, email, and watchdog settings.
+- [Data protection](data-protection.md): GDPR deployment checklist, processing record, rights, retention, and incidents.
 - [Web GUI, API, workflows, and policies](webgui.md): accounts, access rights, dashboards, API tokens, data API, and workflow editor.
 - [Complete API reference](workflows-api.md): every `/api` endpoint, authentication, payloads, responses, and errors; also rendered by the running application at `/docs/workflows-api`.
 - [Production WSGI](wsgi.md): Gunicorn, reverse proxy, and deployment troubleshooting.

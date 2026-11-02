@@ -4,7 +4,9 @@
   <meta charset="utf-8">
   <title>{% block title %}{% endblock %}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/cookie_consent.css') }}" rel="stylesheet">
 {% block head %}{% endblock %}
   {#- Installable web app: manifest, theme colour and icons. #}
   <link rel="manifest" href="{{ url_for('pwa.manifest') }}">
@@ -17,9 +19,37 @@
   <link rel="apple-touch-icon" href="{{ url_for('pwa.icon', size=180) }}">
 </head>
 <body class="{% block body_class %}container py-4{% endblock %}">
+<div id="cookieConsentBanner" class="cookie-consent-banner d-none" role="dialog" aria-modal="false" aria-labelledby="cookieConsentTitle" aria-describedby="cookieConsentText">
+  <button id="cookieConsentClose" class="btn-close cookie-consent-close" type="button" aria-label="Continue with necessary cookies only"></button>
+  <h2 id="cookieConsentTitle" class="h5">Cookie choices</h2>
+  <p id="cookieConsentText" class="mb-3">We use necessary cookies for login, security, settings, and remembering this choice. The portal does not currently set advertising or analytics cookies. You can reject optional cookies and continue using the portal.</p>
+  <div class="d-flex flex-wrap gap-2">
+    <button id="cookieConsentReject" class="btn btn-outline-primary" type="button">Reject optional cookies</button>
+    <button id="cookieConsentAccept" class="btn btn-primary" type="button">Accept optional cookies</button>
+    <a class="btn btn-link" href="{{ url_for('public.privacy_notice') }}#cookies">Cookie details</a>
+  </div>
+</div>
+{% if session.get('impersonator_username') %}
+<div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-2" role="alert">
+  <span>Impersonating <b>{{ session.get('username') }}</b> as administrator <b>{{ session.get('impersonator_username') }}</b>.</span>
+  <form method="post" action="{{ url_for('admin.stop_impersonation') }}">
+    <button class="btn btn-warning btn-sm" type="submit">Return to administrator</button>
+  </form>
+</div>
+{% endif %}
 {% block body %}{% endblock %}
+<footer class="mt-5 pt-3 border-top small text-muted">
+  <a href="{{ url_for('public.privacy_notice') }}">Privacy and data protection</a> ·
+  <button id="cookieConsentReview" class="btn btn-link btn-sm p-0 align-baseline" type="button">Review cookie choices</button> ·
+  <label for="themePreference" class="visually-hidden">Theme</label>
+  <select id="themePreference" class="form-select form-select-sm d-inline-block w-auto align-baseline" aria-label="Color theme">
+    <option value="light">Day theme</option>
+    <option value="dark">Night theme</option>
+  </select>
+</footer>
 <div id="pwaOfflineBanner" class="alert alert-warning shadow-sm position-fixed bottom-0 start-50 translate-middle-x mb-3 py-2 px-3 d-none" role="status" style="z-index:2000">You are offline. Data shown may be out of date.</div>
 <button id="pwaInstallButton" type="button" class="btn btn-primary shadow position-fixed bottom-0 end-0 m-3 d-none" style="z-index:2000">Install app</button>
 <script src="{{ url_for('static', filename='js/pwa.js') }}" data-sw-url="{{ url_for('pwa.service_worker') }}" data-scope="{{ url_for('public.index') }}"></script>
+<script src="{{ url_for('static', filename='js/cookie_consent.js') }}"></script>
 </body>
 </html>
