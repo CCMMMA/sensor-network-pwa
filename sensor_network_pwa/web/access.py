@@ -8,18 +8,34 @@ import functools
 import mimetypes
 from pathlib import Path
 
-from flask import abort, current_app, g, redirect, request, send_file, session, url_for
+from flask import abort, current_app, g, has_request_context, redirect, request, send_file, session, url_for
 
 from sensor_network_pwa.access_store import AccessStore
 from sensor_network_pwa.storage import collect_instruments
 
 CONFIG_KEY = "PORTAL_CONFIG"
 STORE_EXTENSION = "access_store"
+DEFAULT_LOGO = Path(__file__).parent / "static" / "images" / "meteo-uniparthenope-logo.png"
+DEFAULT_ICON = Path(__file__).parent / "static" / "images" / "meteo-uniparthenope-icon.png"
+APPEARANCE_KEYS = (
+    "web_app_name",
+    "web_app_short_name",
+    "web_app_link",
+    "web_app_logo",
+    "web_app_icon",
+    "web_theme_primary",
+    "web_theme_secondary",
+    "web_theme_accent",
+)
 
 
 def get_cfg() -> dict:
     """The dictionary returned by load_config for this application."""
-    return current_app.config[CONFIG_KEY]
+    cfg = current_app.config[CONFIG_KEY]
+    if has_request_context() and not getattr(g, "appearance_loaded", False):
+        cfg.update(current_app.extensions[STORE_EXTENSION].get_app_settings(APPEARANCE_KEYS))
+        g.appearance_loaded = True
+    return cfg
 
 
 def get_store() -> AccessStore:
@@ -28,6 +44,10 @@ def get_store() -> AccessStore:
 
 def app_logo_path() -> str:
     return str(get_cfg().get("web_app_logo") or "").strip()
+
+
+def app_icon_path() -> str:
+    return str(get_cfg().get("web_app_icon") or "").strip()
 
 
 def send_image_asset(path: Path):
@@ -118,11 +138,21 @@ def station_is_controllable(user, instrument_uuid: str):
 
 def logo_url(path: str):
     if not path:
-        return None
+        return url_for("public.asset_file", kind="app", name=DEFAULT_LOGO.name)
     p = Path(path)
     if not p.exists() or not p.is_file():
         return None
     return url_for("public.asset_file", kind="app", name=p.name)
+
+
+def branding_asset_dir() -> Path:
+    cfg = get_cfg()
+    root = Path(cfg.get("storage_root") or cfg.get("auth_db_path") or ".").resolve()
+    if root.suffix:
+        root = root.parent
+    out = root / "_branding"
+    out.mkdir(parents=True, exist_ok=True)
+    return out
 
 
 def station_logo_dir() -> Path:

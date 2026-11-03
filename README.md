@@ -32,7 +32,7 @@ project only reads that data and serves it. It never connects to MQTT.
 - Administration page with per-user and per-station rights tables, roles, and account enable/disable
 - Watchdog anomaly detection and workflow evaluation, including shared conditions across multiple stations, with persisted state and email notifications
 - Profile page where each user sets the notification time and acknowledges, snoozes, or clears notifications
-- Web app logo and per-station logo upload
+- Admin-managed brand, theme colours, web app logo/icon, and per-station logo upload
 - Optional InfluxDB v2 reads that complement the CSV files on the public dashboards
 - Built-in, responsive and searchable documentation rendered directly from the canonical
   `docs/*.md` files and `docs/images` assets
@@ -43,7 +43,7 @@ project only reads that data and serves it. It never connects to MQTT.
 
 - Python 3.10+ (CI checks 3.10–3.14; Docker uses 3.11)
 - Read access to the collector's `pathStorage` directory, with write access to its
-  `_logos` subdirectory for station logo uploads
+  `_logos` and `_branding` subdirectories for station and portal appearance uploads
 - A database configured with `databaseUrl`/`DATABASE_URL` (PostgreSQL recommended in production),
   or a writable SQLite location (`authDbPath`) for development
 - Optional: the collector's InfluxDB v2 bucket (read token), an SMTP relay
@@ -90,7 +90,8 @@ and watchdog services from the same image (see [Docker deployment](docs/docker.m
 | `authDbPath` | Backwards-compatible SQLite file used when `databaseUrl` is unset |
 | `baseUrl` | URL users open; used in email links and to accept form submissions |
 | `webSessionSecret` | Secret signing the session cookies |
-| `webAppName`, `webAppShortName` | Names shown when the app is installed |
+| `webAppName`, `webAppShortName` | Brand and installed-app names; administrators can override them under **Settings → Appearance** |
+| `webAppLogo`, `webAppIcon` | Optional logo and install-icon paths; bundled meteo@uniparthenope artwork is used by default |
 | `mapTileUrl`, `mapTileAttribution` | Home-map tile provider URL and required attribution |
 | `adminUser`, `adminPassword` | Initial admin account, created only if missing |
 | `influxdb`, `influxdb*` | Optional InfluxDB v2 read access |

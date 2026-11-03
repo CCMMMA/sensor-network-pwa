@@ -63,6 +63,9 @@
         {% if pending_requests %}<span class="badge text-bg-warning">{{ pending_requests|length }}</span>{% endif %}
       </button>
     </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#settings" type="button" role="tab">Settings</button>
+    </li>
   </ul>
 
   <div class="tab-content bg-white border border-top-0 rounded-bottom p-3 shadow-sm">
@@ -405,6 +408,34 @@
       </table>
       </div>
       {% endif %}
+    </div>
+
+    {# ------------------------------ Settings / Appearance ------------------------------ #}
+    <div class="tab-pane fade" id="settings" role="tabpanel">
+      <h2 class="h5">Appearance</h2>
+      <p class="text-muted">Set the portal brand, theme colours, header logo, and installable application icon. Saved values override configuration-file defaults.</p>
+      <form method="post" action="{{ url_for('admin.save_appearance') }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="row g-3">
+          <div class="col-md-7"><label class="form-label" for="appearanceName">Brand name</label><input class="form-control" id="appearanceName" name="web_app_name" value="{{ appearance.web_app_name }}" required></div>
+          <div class="col-md-5"><label class="form-label" for="appearanceShortName">Application short name</label><input class="form-control" id="appearanceShortName" name="web_app_short_name" value="{{ appearance.web_app_short_name }}" required maxlength="30"></div>
+          <div class="col-12"><label class="form-label" for="appearanceLink">Brand link</label><input class="form-control" id="appearanceLink" name="web_app_link" type="url" value="{{ appearance.web_app_link }}" placeholder="https://meteo.uniparthenope.it"></div>
+          {% for key, label in (("primary", "Primary"), ("secondary", "Secondary"), ("accent", "Accent")) %}
+          <div class="col-md-4"><label class="form-label" for="appearance-{{ key }}">{{ label }} colour</label><div class="input-group"><input class="form-control form-control-color" id="appearance-{{ key }}" type="color" value="{{ appearance['web_theme_' ~ key] }}" data-color-picker="appearance-{{ key }}-text" aria-label="{{ label }} colour picker"><input class="form-control font-monospace" id="appearance-{{ key }}-text" name="web_theme_{{ key }}" value="{{ appearance['web_theme_' ~ key] }}" pattern="#[0-9A-Fa-f]{6}" required></div></div>
+          {% endfor %}
+          <div class="col-md-6">
+            <label class="form-label" for="appearanceLogo">Logo</label><div class="appearance-preview"><img src="{{ portal_logo_url }}" alt="Current portal logo"></div>
+            <input class="form-control" id="appearanceLogo" name="logo" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml">
+            <div class="form-check mt-2"><input class="form-check-input" id="resetLogo" name="reset_logo" type="checkbox" value="1"><label class="form-check-label" for="resetLogo">Restore meteo@uniparthenope default logo</label></div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="appearanceIcon">Application icon</label><div class="appearance-preview"><img src="{{ url_for('pwa.icon', size=192) }}" alt="Current application icon"></div>
+            <input class="form-control" id="appearanceIcon" name="icon" type="file" accept="image/png,image/jpeg,image/webp"><div class="form-text">A square image is recommended.</div>
+            <div class="form-check mt-2"><input class="form-check-input" id="resetIcon" name="reset_icon" type="checkbox" value="1"><label class="form-check-label" for="resetIcon">Restore meteo@uniparthenope default icon</label></div>
+          </div>
+        </div>
+        <button class="btn btn-primary mt-3" type="submit">Save appearance</button>
+      </form>
     </div>
 
     {# ------------------------------ Requests ------------------------------ #}

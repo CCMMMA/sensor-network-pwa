@@ -4,6 +4,10 @@ import functools
 import math
 import struct
 import zlib
+from io import BytesIO
+from pathlib import Path
+
+from PIL import Image
 
 PWA_THEME_COLOR = "#003b71"
 PWA_ICON_SIZES = (180, 192, 512)
@@ -36,3 +40,15 @@ def build_pwa_icon_png(size: int, theme_color: str = PWA_THEME_COLOR) -> bytes:
         + _png_chunk(b"IDAT", zlib.compress(b"".join(rows), 9))
         + _png_chunk(b"IEND", b"")
     )
+
+
+def resize_icon_png(path: Path, size: int) -> bytes:
+    """Fit an uploaded image into a square transparent PNG for PWA icon routes."""
+    with Image.open(path) as source:
+        image = source.convert("RGBA")
+        image.thumbnail((size, size), Image.Resampling.LANCZOS)
+        canvas = Image.new("RGBA", (size, size), (255, 255, 255, 0))
+        canvas.alpha_composite(image, ((size - image.width) // 2, (size - image.height) // 2))
+        stream = BytesIO()
+        canvas.save(stream, format="PNG", optimize=True)
+        return stream.getvalue()

@@ -9,7 +9,7 @@ from sensor_network_pwa.config import PLACEHOLDER_SESSION_SECRETS
 from sensor_network_pwa.log import logger
 from sensor_network_pwa.runtime import runtime
 from sensor_network_pwa.web import admin, api, auth, hooks, profile, public, pwa, stations
-from sensor_network_pwa.web.access import CONFIG_KEY, STORE_EXTENSION
+from sensor_network_pwa.web.access import APPEARANCE_KEYS, CONFIG_KEY, STORE_EXTENSION
 
 BLUEPRINTS = (pwa.bp, public.bp, stations.bp, auth.bp, admin.bp, profile.bp, api.bp)
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -28,6 +28,7 @@ def _session_secret(cfg: dict, access_store: AccessStore) -> str:
 
 def create_web_app(cfg: dict, access_store: AccessStore) -> Flask:
     """Build the application for one configuration and auth store."""
+    cfg.update(access_store.get_app_settings(APPEARANCE_KEYS))
     app = Flask(__name__)
     app.config.update(
         SECRET_KEY=_session_secret(cfg, access_store),

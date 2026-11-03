@@ -201,6 +201,23 @@ class StoreBase:
             row = con.execute("SELECT value FROM app_settings WHERE key = 'session_secret'").fetchone()
         return row["value"]
 
+    def get_app_settings(self, keys: tuple[str, ...]) -> dict[str, str]:
+        if not keys:
+            return {}
+        placeholders = ",".join("?" for _ in keys)
+        with self._connect() as con:
+            rows = con.execute(f"SELECT key,value FROM app_settings WHERE key IN ({placeholders})", keys).fetchall()
+        return {row["key"]: row["value"] for row in rows}
+
+    def set_app_settings(self, values: dict[str, str]) -> None:
+        with self._lock, self._connect() as con:
+            for key, value in values.items():
+                con.execute(
+                    "INSERT INTO app_settings(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, value),
+                )
+
     def healthcheck(self) -> bool:
         with self._connect() as con:
             return con.execute("SELECT 1").fetchone()[0] == 1

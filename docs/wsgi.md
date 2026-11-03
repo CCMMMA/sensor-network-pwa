@@ -42,6 +42,7 @@ Required keys:
 Optional but commonly relevant:
 
 - `webAppLogo`
+- `webAppIcon`
 - `smtpHost` / `smtpFrom` for account, alarm, and workflow emails
 - if `smtpHost` is omitted, email features remain inactive
 

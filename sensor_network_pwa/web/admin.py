@@ -1,20 +1,26 @@
 """Administration pages, anomaly log and admin actions."""
 
 import csv
+import hashlib
 import io
+import re
 from collections import Counter
 from datetime import timedelta
+from pathlib import Path
+from urllib.parse import urlsplit
 
 from flask import Blueprint, Response, abort, flash, g, jsonify, redirect, render_template, request, session, url_for
+from PIL import Image, UnidentifiedImageError
 
 from sensor_network_pwa.anomalies import build_admin_network_dashboard
 from sensor_network_pwa.config import parse_boolish
 from sensor_network_pwa.mailer import compose_external_url, queue_email
 from sensor_network_pwa.storage import collect_instruments, get_station_preview
 from sensor_network_pwa.timeutil import parse_date_ymd, utc_now
-from sensor_network_pwa.validation import is_valid_email
+from sensor_network_pwa.validation import is_valid_email, safe_filename
 from sensor_network_pwa.web.access import (
     admin_required,
+    branding_asset_dir,
     get_cfg,
     get_store,
     login_required,
@@ -70,7 +76,68 @@ def index():
         pending_requests=pending_requests,
         smtp_ready=bool(get_cfg().get("smtp_enabled") and get_cfg().get("smtp_host")),
         email_queue=email_queue,
+        appearance=get_cfg(),
     )
+
+
+def _appearance_url(value: str) -> bool:
+    if not value:
+        return True
+    parsed = urlsplit(value)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
+@bp.post("/admin/settings/appearance")
+@admin_required
+def save_appearance():
+    values = {
+        "web_app_name": request.form.get("web_app_name", "").strip(),
+        "web_app_short_name": request.form.get("web_app_short_name", "").strip(),
+        "web_app_link": request.form.get("web_app_link", "").strip(),
+        "web_theme_primary": request.form.get("web_theme_primary", "").strip().lower(),
+        "web_theme_secondary": request.form.get("web_theme_secondary", "").strip().lower(),
+        "web_theme_accent": request.form.get("web_theme_accent", "").strip().lower(),
+    }
+    if not values["web_app_name"] or not values["web_app_short_name"]:
+        return admin_done("settings", False, "Brand name and short name are required")
+    if not _appearance_url(values["web_app_link"]):
+        return admin_done("settings", False, "Brand link must be an http or https URL")
+    colour_keys = ("web_theme_primary", "web_theme_secondary", "web_theme_accent")
+    if any(not re.fullmatch(r"#[0-9a-f]{6}", values[key]) for key in colour_keys):
+        return admin_done("settings", False, "Theme colours must use six-digit hexadecimal values")
+
+    uploads = (
+        ("logo", "web_app_logo", (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")),
+        ("icon", "web_app_icon", (".png", ".jpg", ".jpeg", ".webp")),
+    )
+    asset_dir = branding_asset_dir()
+    for form_key, setting_key, extensions in uploads:
+        if request.form.get(f"reset_{form_key}"):
+            values[setting_key] = ""
+            continue
+        upload = request.files.get(form_key)
+        if upload is None or not upload.filename:
+            continue
+        ext = Path(safe_filename(upload.filename)).suffix.lower()
+        if ext not in extensions:
+            return admin_done("settings", False, f"Unsupported {form_key} format")
+        content = upload.read()
+        if not content:
+            return admin_done("settings", False, f"The {form_key} file is empty")
+        if form_key == "icon":
+            try:
+                with Image.open(io.BytesIO(content)) as image:
+                    image.verify()
+            except (UnidentifiedImageError, OSError):
+                return admin_done("settings", False, "The application icon is not a valid image")
+        digest = hashlib.sha256(content).hexdigest()[:12]
+        path = asset_dir / f"{form_key}_{digest}{ext}"
+        path.write_bytes(content)
+        values[setting_key] = str(path)
+
+    get_store().set_app_settings(values)
+    get_cfg().update(values)
+    return admin_done("settings", True, "Appearance settings saved")
 
 
 @bp.route("/admin/dashboard")

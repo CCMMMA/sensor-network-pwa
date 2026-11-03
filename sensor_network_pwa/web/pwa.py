@@ -1,11 +1,12 @@
 """Progressive web app routes: manifest, service worker, icons and the offline page."""
 
 import json
+from pathlib import Path
 
 from flask import Blueprint, Response, abort, render_template, url_for
 
-from sensor_network_pwa.web.access import app_logo_path, current_user, get_cfg, logo_url
-from sensor_network_pwa.web.pwa_assets import PWA_ICON_SIZES, build_pwa_icon_png
+from sensor_network_pwa.web.access import DEFAULT_ICON, app_icon_path, app_logo_path, current_user, get_cfg, logo_url
+from sensor_network_pwa.web.pwa_assets import PWA_ICON_SIZES, resize_icon_png
 
 bp = Blueprint("pwa", __name__)
 
@@ -72,6 +73,7 @@ def service_worker():
         url_for("static", filename="css/cookie_consent.css"),
         url_for("static", filename="js/theme.js"),
         url_for("static", filename="js/pwa.js"),
+        url_for("static", filename="images/meteo-uniparthenope-logo.png"),
     ]
     precache += [url_for("pwa.icon", size=size) for size in PWA_ICON_SIZES]
     script = render_template("pwa/service-worker.js", offline_url=url_for("pwa.offline"), precache=precache)
@@ -85,7 +87,8 @@ def service_worker():
 def icon(size: int):
     if size not in PWA_ICON_SIZES:
         abort(404)
-    response = Response(build_pwa_icon_png(size, get_cfg()["web_theme_primary"]), mimetype="image/png")
+    custom = Path(app_icon_path()) if app_icon_path() else DEFAULT_ICON
+    response = Response(resize_icon_png(custom, size), mimetype="image/png")
     response.headers["Cache-Control"] = "public, max-age=86400"
     return response
 

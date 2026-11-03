@@ -4,3 +4,4 @@ influxdb-client==1.50.0
 Markdown==3.10.3
 SQLAlchemy==2.0.44
 psycopg[binary]==3.2.12
+Pillow==11.3.0

@@ -39,8 +39,8 @@ are ignored, so a configuration file shared with the collector works unchanged.
 - `logLevel` (`LOG_LEVEL`): `DEBUG|INFO|WARNING|ERROR`
 - `pathStorage` (`STORAGE_ROOT`): the collector's CSV storage root. Stations are
   discovered from its sub-directories. The application reads the CSV files and writes
-  only station logos, under `<pathStorage>/_logos`. Without it no station is shown and
-  the watchdog is disabled.
+  station logos under `<pathStorage>/_logos` and Appearance-panel assets under
+  `<pathStorage>/_branding`. Without it no station is shown and the watchdog is disabled.
 - `signalkPathMap` (`SIGNALK_PATH_MAP`): optional; only `meta.units` of each entry is
   used, to label fields that have no built-in unit.
 
@@ -82,18 +82,26 @@ See [database.md](database.md) for production selection, migration, and backup g
   exist yet; an account created with the default (`admin`) or a sample password must
   change it at first login
 - `webAppName` (`WEB_APP_NAME`): application name in the web manifest, shown when the
-  app is installed. Defaults to `Sensor Network Data Portal`
+  app is installed. Defaults to `meteo@uniparthenope Sensor Network`
 - `webAppShortName` (`WEB_APP_SHORT_NAME`): name under the home-screen icon. Defaults
-  to `Sensor Network`
-- `webAppLogo`: optional absolute path to the app logo image
+  to `meteo@uniparthenope`
+- `webAppLogo`: optional absolute path to the app logo image; the bundled
+  meteo@uniparthenope logo is used when empty
+- `webAppIcon` (`WEB_APP_ICON`): optional absolute path to the PNG, JPEG, or WebP
+  application icon; the bundled meteo@uniparthenope icon is used when empty
 - `webAppLink`: optional external URL opened when the home-page logo is clicked
 - `webInfoLink`: optional external URL shown as `Info` before `Login` on the home page
 - `webThemePrimary` (`WEB_THEME_PRIMARY`): main brand/navigation and installed-PWA
-  colour as a three- or six-digit hexadecimal CSS colour (default `#003b71`)
+  colour as a three- or six-digit hexadecimal CSS colour (default `#1f4e79`)
 - `webThemeSecondary` (`WEB_THEME_SECONDARY`): supporting links, highlights and
-  gradients (default `#007c91`)
+  gradients (default `#2a91eb`)
 - `webThemeAccent` (`WEB_THEME_ACCENT`): small emphasis details and status accents
-  (default `#f2b134`). Invalid theme colours safely fall back to these defaults.
+  (default `#181c63`). Invalid theme colours safely fall back to these defaults.
+
+Administrators can change all of these branding values at runtime in
+**Administration → Settings → Appearance**. Database values take precedence over the
+configuration file and environment variables. Uploaded assets are stored in
+`<pathStorage>/_branding`; the reset controls restore the bundled defaults.
 - `mapTileUrl` (`MAP_TILE_URL`): Leaflet tile URL for the home-page map. Defaults to
   OpenStreetMap's canonical `https://tile.openstreetmap.org/{z}/{x}/{y}.png`; do not
   restore the obsolete `{s}.tile.openstreetmap.org` form. For a public production

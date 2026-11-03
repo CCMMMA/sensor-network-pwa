@@ -284,7 +284,42 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertIn("standalone", manifest["display_override"])
         worker = client.get("/service-worker.js").get_data(as_text=True)
         self.assertIn('"/static/css/portal.css"', worker)
-        self.assertIn("sensor-network-pwa-v5", worker)
+        self.assertIn("sensor-network-pwa-v6", worker)
+
+    def test_admin_can_manage_persistent_appearance_settings(self):
+        client = self.client("admin")
+        page = client.get("/admin").get_data(as_text=True)
+        self.assertIn('data-bs-target="#settings"', page)
+        self.assertIn("Appearance", page)
+        self.assertIn("meteo@uniparthenope", page)
+        icon_path = Path(__file__).parents[1] / "sensor_network_pwa/web/static/images/meteo-uniparthenope-icon.png"
+        icon = icon_path.read_bytes()
+        response = client.post(
+            "/admin/settings/appearance",
+            data={
+                "web_app_name": "Test Weather Portal",
+                "web_app_short_name": "Test Weather",
+                "web_app_link": "https://example.org/weather",
+                "web_theme_primary": "#112233",
+                "web_theme_secondary": "#445566",
+                "web_theme_accent": "#778899",
+                "logo": (io.BytesIO(icon), "logo.png"),
+                "icon": (io.BytesIO(icon), "icon.png"),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.location.endswith("/admin#settings"))
+        page = client.get("/").get_data(as_text=True)
+        self.assertIn("Test Weather Portal", page)
+        self.assertIn("--portal-primary:#112233", page)
+        manifest = client.get("/manifest.webmanifest").get_json(force=True)
+        self.assertEqual(manifest["name"], "Test Weather Portal")
+        self.assertEqual(manifest["theme_color"], "#112233")
+        self.assertEqual(client.get("/pwa/icon-512.png").status_code, 200)
+
+        reloaded = create_web_app(dict(self.cfg), self.store).test_client()
+        self.assertEqual(reloaded.get("/manifest.webmanifest").get_json(force=True)["name"], "Test Weather Portal")
+        self.assertEqual(self.client("bob").post("/admin/settings/appearance", data={}).status_code, 403)
 
     def test_password_change_requires_strong_password(self):
         client = self.client("bob")

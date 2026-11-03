@@ -191,8 +191,10 @@ def privacy_notice():
 @bp.route("/assets/<kind>/<path:name>")
 def asset_file(kind: str, name: str):
     if kind == "app":
-        p = Path(app_logo_path()) if app_logo_path() else None
-        if p is None or not p.is_file() or p.name != name:
+        from sensor_network_pwa.web.access import DEFAULT_LOGO
+
+        p = Path(app_logo_path()) if app_logo_path() else DEFAULT_LOGO
+        if not p.is_file() or p.name != name:
             abort(404)
         return send_image_asset(p)
 

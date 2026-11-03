@@ -40,7 +40,8 @@ Important:
 - Use network-reachable hostnames for InfluxDB/SMTP, not `localhost`.
 - Compose injects `DATABASE_URL` for PostgreSQL. Do not commit `.env`; use Docker secrets or
   your orchestrator's secret store in a production cluster.
-- The process user needs write access to `<pathStorage>/_logos`.
+- The process user needs write access to `<pathStorage>/_logos` and
+  `<pathStorage>/_branding`.
 - On Linux, make writable bind mounts accessible to UID/GID 10001, for example
   `sudo chown -R 10001:10001 ./data`. Do not make the directory world-writable.
 
