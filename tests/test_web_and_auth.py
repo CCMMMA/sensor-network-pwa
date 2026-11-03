@@ -26,7 +26,7 @@ from sensor_network_pwa.maintenance import backup_database, restore_drill, verif
 from sensor_network_pwa.runtime import runtime
 from sensor_network_pwa.storage import iter_csv_files_newest_first, iter_csv_rows, load_station_rows, to_float
 from sensor_network_pwa.watchdog import run_watchdog_scan
-from sensor_network_pwa.web import create_web_app, stations
+from sensor_network_pwa.web import create_web_app, pwa_assets, stations
 from sensor_network_pwa.workflows import run_workflows
 
 STRONG = "Str0ng!Passw0rd"
@@ -295,7 +295,7 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertIn('value="network.meteo@uniarthenope"', page)
         manifest = client.get("/manifest.webmanifest").get_json(force=True)
         self.assertEqual(manifest["short_name"], "network.meteo@uniarthenope")
-        icon_path = Path(__file__).parents[1] / "sensor_network_pwa/web/static/images/meteo-uniparthenope-icon.png"
+        icon_path = Path(pwa_assets.__file__).parent / "static/images/meteo-uniparthenope-icon.png"
         icon = icon_path.read_bytes()
         response = client.post(
             "/admin/settings/appearance",
@@ -521,8 +521,9 @@ class WebAndAuthTests(unittest.TestCase):
 
     def test_email_queue_rate_limits_delivery_and_reports_admin_status(self):
         cfg = dict(self.cfg, smtp_enabled=True, smtp_host="smtp.example.org", smtp_queue_batch_size=2)
-        for number in range(3):
-            self.assertTrue(queue_email(cfg, self.store, [f"user{number}@example.org"], f"Mail {number}", "Body"))
+        with patch("sensor_network_pwa.mailer.utc_now", return_value=self.now):
+            for number in range(3):
+                self.assertTrue(queue_email(cfg, self.store, [f"user{number}@example.org"], f"Mail {number}", "Body"))
         delivered = []
 
         def deliver(_cfg, recipients, subject, _body):
