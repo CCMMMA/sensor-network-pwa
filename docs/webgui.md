@@ -5,6 +5,10 @@ first consult [Getting started](getting-started.md); API consumers should use
 [Using collected data](using-data.md), and the system rationale appears in
 [Architecture and data flows](architecture.md).
 
+The screenshots use representative demonstration stations and accounts. Names,
+timestamps, measurements, and email addresses are examples; the controls and page
+layout are those of the running application.
+
 After login, the `next` return URL must be a local path beginning with a single
 `/`. External URLs, backslashes, and control characters fall back to the home page.
 
@@ -76,6 +80,12 @@ The portal can be installed on phones and desktops ("Add to Home screen" / "Inst
 
 The home page station map and browse/download list use a lightweight latest-sample preview per station. They show the latest known station name, position, and timestamp without scanning the full historical archive, so the home page stays responsive even with large CSV storage trees.
 
+![Home page with the station map, network summary, and latest-station cards](images/webgui-home.jpg)
+
+The opening view keeps discovery and current conditions above the fold. After sign-in,
+the same page adds the permitted station archive and download controls below the
+station cards.
+
 ### Stations map
 
 - the map zooms to show every station that has coordinates; stations with missing or invalid coordinates are listed but not drawn
@@ -124,11 +134,23 @@ answers `404` otherwise, and its snapshot API answers `404`.
 
 If an unauthenticated user opens a protected page, the web app redirects to `/login` and shows an alert explaining that authentication is required. The original destination is preserved in `next=...` and is reopened after successful login.
 
+![Sign-in page with account recovery and account-request links](images/webgui-login.jpg)
+
+The sign-in card deliberately keeps recovery and account-request paths beside the
+credentials form. The shared header, footer, theme selector, and privacy controls
+remain available before authentication.
+
 ## Administration page
 
 `/admin` has three tabs; every action reports its result at the top of the page and
 returns to the tab it was started from (`/admin#users`, `/admin#stations`,
 `/admin#requests`).
+
+![Administration page showing summary cards, navigation, and the user-rights overview](images/webgui-admin.jpg)
+
+The summary cards give administrators an immediate count of users, stations, pending
+requests, and queued email. The tabs beneath them keep user, station, request, and
+mail-queue operations on one page; the screenshot shows the user overview.
 
 - **Users**: searchable list with role, status, and a summary of station rights.
   `New user` opens the creation form (the password rules are shown; "ask for a new
@@ -189,6 +211,12 @@ Users with `Can API` (and administrators, implicitly) manage their own tokens at
 `/api-tokens`. The workflow toolbar links to token management only for those users;
 workflow-only accounts keep the editor without an inaccessible token-management link.
 The session-only CRUD endpoints are:
+
+![API-token page with the token creation form and existing-token list](images/webgui-api-tokens.jpg)
+
+The creation form returns a secret once. The list below it subsequently shows only
+safe metadata such as the token name, prefix, expiry, and last-use time, together with
+the edit and revoke controls.
 
 - `GET /api/tokens` and `GET /api/tokens/<id>`
 - `POST /api/tokens` with `{"name":"Exporter","expires_at":"2026-12-31T23:59:59Z"}`
@@ -305,6 +333,13 @@ This is used for the Public Station Dashboard trend charts only.
 station. It needs Browse permission; anonymous visitors of a non-open station
 are sent to the login page.
 
+![Station data page with interval navigation, parameter controls, plot, and export actions](images/webgui-station-data.jpg)
+
+The upper part of the page combines time navigation and plot configuration so a user
+can change the interval and series without losing context. The data table and range
+statistics follow below the chart, while download actions appear only when the user
+also has Download CSV permission.
+
 Units shown follow the raw MQTT/storage field units, not the Signal K converted metadata
 units (`WindDir` is shown as `deg` even if the Signal K path uses `rad`).
 
@@ -394,6 +429,12 @@ Management flow:
 - edit values for one or more charts
 - leave fields empty to keep automatic sizing
 - save changes
+
+![Per-station public-dashboard chart-axis settings](images/webgui-chart-settings.jpg)
+
+Each row pairs the configured minimum, maximum, and tick step with the effective values
+currently used by the public dashboard. This makes it possible to compare a manual
+override with the automatic range before exporting or copying the setup.
 
 The page also shows:
 
@@ -530,6 +571,12 @@ form.
 
 On `/profile` every user:
 
+![Profile page with notification interval and personal notification controls](images/webgui-profile.jpg)
+
+The profile keeps the reminder interval and the user's current station notifications
+together. Acknowledging, snoozing, or clearing an entry changes only that user's
+delivery state; it does not silence the underlying anomaly for other users.
+
 - chooses the notification time from a drop-down list: no email notifications, status
   changes only (no reminders), 15 or 30 minutes, 1, 2, 3, 6, 12, or 24 hours. The
   default is 60 minutes. With email disabled, failures remain visible in the profile,
@@ -547,6 +594,12 @@ reminders. An abandoned claim expires after five minutes if a watchdog stops bef
 delivery.
 
 ## Branding and logos
+
+![Public station dashboard with current-value cards and live trend charts](images/webgui-public-dashboard.jpg)
+
+The public view combines the configured portal branding with the station identity,
+current values, trend-window selector, and responsive chart grid. It is the page opened
+by `Open dashboard` on the home map and station cards.
 
 - `webAppLogo` sets global app logo
 - `webAppLink` can wrap the home-page logo with an external hyperlink
