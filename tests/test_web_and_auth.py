@@ -841,6 +841,7 @@ class WebAndAuthTests(unittest.TestCase):
 
         docs = self.client().get("/docs").get_data(as_text=True)
         self.assertIn('for="docsSearch">Search documentation</label>', docs)
+        self.assertEqual(docs.count('for="docsSearch">Search documentation</label>'), 1)
 
         settings = self.client("admin").get("/station/station/chart-settings").get_data(as_text=True)
         self.assertIn('aria-label="Minimum y-axis value for', settings)
