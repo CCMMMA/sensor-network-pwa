@@ -298,7 +298,7 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertIn("standalone", manifest["display_override"])
         worker = client.get("/service-worker.js").get_data(as_text=True)
         self.assertIn('"/static/css/portal.css"', worker)
-        self.assertIn("sensor-network-pwa-v7", worker)
+        self.assertIn("sensor-network-pwa-v8", worker)
 
     def test_admin_can_manage_persistent_appearance_settings(self):
         client = self.client("admin")
