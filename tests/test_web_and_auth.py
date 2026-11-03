@@ -848,7 +848,9 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertIn('aria-label="Maximum y-axis value for', settings)
         self.assertIn('aria-label="Y-axis step for', settings)
 
-        workflow_script = (Path(__file__).parents[1] / "sensor_network_pwa/web/static/js/workflows.js").read_text()
+        workflow_response = self.client().get("/static/js/workflows.js")
+        workflow_script = workflow_response.get_data(as_text=True)
+        workflow_response.close()
         self.assertIn("element.tabIndex = 0", workflow_script)
         self.assertIn('path.setAttribute("tabindex", "0")', workflow_script)
         self.assertIn('event.key === "Enter" || event.key === " "', workflow_script)
