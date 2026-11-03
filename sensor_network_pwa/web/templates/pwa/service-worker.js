@@ -1,6 +1,6 @@
 {#- The worker keeps only static assets and the offline page: pages and API responses
     depend on the logged-in user and are always fetched from the network. -#}
-const CACHE = 'sensor-network-pwa-v7';
+const CACHE = 'sensor-network-pwa-v8';
 const OFFLINE_URL = {{ offline_url | tojson }};
 const PRECACHE = {{ precache | tojson }};
 const STATIC_HOSTS = ['cdn.jsdelivr.net', 'unpkg.com'];

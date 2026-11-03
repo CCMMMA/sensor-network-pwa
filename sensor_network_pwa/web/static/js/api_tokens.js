@@ -16,7 +16,13 @@
     }
     return response.status === 204 ? null : response.json();
   };
-  const format = value => value ? new Date(value).toLocaleString() : "Never";
+  const format = value => {
+    if (!value) return "Never";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    const pad = number => String(number).padStart(2, "0");
+    return `${pad(date.getUTCDate())}/${pad(date.getUTCMonth() + 1)}/${date.getUTCFullYear()} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+  };
   const expiryValue = value => value ? new Date(value).toISOString().slice(0, 16) : "";
   const payload = (name, expiry) => JSON.stringify({name, expires_at: expiry ? new Date(expiry).toISOString() : null});
   const reload = async () => {

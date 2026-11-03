@@ -15,7 +15,7 @@
         <td>{{ a.anomaly_type }}</td>
         <td>{{ a.status }}</td>
         <td>{{ a.message }}</td>
-        <td>{{ a.updated_at }}</td>
+        <td>{{ a.updated_at|datetime_display }}</td>
         <td>
           {% if a.status == 'open' %}
           <form method="post" action="{{ url_for('admin.silence_anomaly') }}" class="d-flex gap-1">

@@ -1,6 +1,12 @@
 const pageConfig = JSON.parse(document.getElementById('pageConfig').textContent);
 const stations = pageConfig.stations;
 const mapEl = document.getElementById('map');
+const formatDateTime = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value || '');
+  const pad = (number) => String(number).padStart(2, '0');
+  return `${pad(date.getUTCDate())}/${pad(date.getUTCMonth() + 1)}/${date.getUTCFullYear()} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+};
 if (stations.length > 0 && mapEl && window.L) {
   const map = L.map(mapEl).setView([Number(pageConfig.center.lat), Number(pageConfig.center.lon)], Number(pageConfig.center.zoom));
   L.tileLayer(pageConfig.mapTileUrl, {
@@ -42,7 +48,7 @@ if (stations.length > 0 && mapEl && window.L) {
     addLine(s.uuid);
     addLine(`policy: ${s.policy}`);
     if (s.last_timestamp) {
-      addLine(`last data: ${s.last_timestamp}`);
+      addLine(`last data: ${formatDateTime(s.last_timestamp)}`);
     }
     const actions = document.createElement('div');
     actions.className = 'd-grid gap-1 mt-2';

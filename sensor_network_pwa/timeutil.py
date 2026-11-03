@@ -40,6 +40,16 @@ def parse_iso_ts(value: str):
         return None
 
 
+def format_datetime(value) -> str:
+    """Render an ISO timestamp as DD/MM/YYYY HH:mm in UTC."""
+    dt = value if isinstance(value, datetime) else parse_iso_ts(str(value or ""))
+    if dt is None:
+        return str(value or "")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%d/%m/%Y %H:%M")
+
+
 def shift_months(dt: datetime, months: int):
     y = dt.year + ((dt.month - 1 + months) // 12)
     m = ((dt.month - 1 + months) % 12) + 1

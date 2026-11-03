@@ -162,6 +162,10 @@ documentation media is served from `docs/images`.
 
 ## Tests
 
+Dates and times shown in portal tables and charts use UTC and the fixed
+`DD/MM/YYYY HH:mm` 24-hour format. Machine-readable APIs and CSV exports retain
+their ISO-8601 timestamps.
+
 ```bash
 python3 -m unittest discover -s tests -v
 ```

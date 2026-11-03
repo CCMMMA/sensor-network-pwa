@@ -57,7 +57,7 @@
       </form>
     </div>
     <p class="mb-0 mt-3" id="intervalSummary">
-      <b>{{ total_rows }}</b> rows from <b>{{ win_start }}</b> to <b>{{ win_end }}</b> (UTC).
+      <b>{{ total_rows }}</b> rows from <b>{{ win_start|datetime_display }}</b> to <b>{{ win_end|datetime_display }}</b> (UTC).
       {% if chart_step > 1 %}<span class="text-muted">The chart shows one sample every {{ chart_step }}; the table and the statistics use all {{ total_rows }} rows.</span>{% endif %}
     </p>
   </div></div>
@@ -243,7 +243,7 @@
         </tr></thead>
         <tbody>
           {% for r in table_rows %}
-            <tr>{% for c in all_table_columns %}<td class="c{{ loop.index0 }}">{{ r.get(c) if r.get(c) is not none else '' }}</td>{% endfor %}</tr>
+            <tr>{% for c in all_table_columns %}<td class="c{{ loop.index0 }}">{% if c == 'timestamp' %}{{ r.get(c)|datetime_display }}{% else %}{{ r.get(c) if r.get(c) is not none else '' }}{% endif %}</td>{% endfor %}</tr>
           {% endfor %}
         </tbody>
       </table>
@@ -263,8 +263,8 @@
               <td>{{ stat.column }}</td>
               <td>{{ units_map.get(stat.column, '') }}</td>
               <td class="text-end">{{ stat.count }}</td>
-              <td class="text-end">{{ stat.min }}</td><td class="text-muted">{{ stat.min_at or '-' }}</td>
-              <td class="text-end">{{ stat.max }}</td><td class="text-muted">{{ stat.max_at or '-' }}</td>
+              <td class="text-end">{{ stat.min }}</td><td class="text-muted">{{ stat.min_at|datetime_display if stat.min_at else '-' }}</td>
+              <td class="text-end">{{ stat.max }}</td><td class="text-muted">{{ stat.max_at|datetime_display if stat.max_at else '-' }}</td>
               <td class="text-end">{{ stat.avg }}</td>
               <td class="text-end">{{ stat.stddev }}</td>
             </tr>

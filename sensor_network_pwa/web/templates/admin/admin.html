@@ -82,7 +82,7 @@
           <tr>
             <td><span class="badge {{ 'text-bg-success' if item.status == 'sent' else ('text-bg-primary' if item.status == 'sending' else 'text-bg-warning') }}">{{ item.status }}</span></td>
             <td>{{ item.recipients|join(', ') }}</td><td>{{ item.subject }}</td><td>{{ item.attempts }}</td>
-            <td>{{ item.created_at }}</td><td>{{ item.sent_at or item.next_attempt_at }}</td><td class="text-danger small">{{ item.last_error or '' }}</td>
+            <td>{{ item.created_at|datetime_display }}</td><td>{{ (item.sent_at or item.next_attempt_at)|datetime_display }}</td><td class="text-danger small">{{ item.last_error or '' }}</td>
           </tr>
         {% else %}<tr><td colspan="7" class="text-muted">No queued email.</td></tr>{% endfor %}
         </tbody>
@@ -301,7 +301,7 @@
                         </form>
                       {% endif %}
                     </div>
-                    <div class="form-text mt-2">Created {{ u.created_at }}</div>
+                    <div class="form-text mt-2">Created {{ u.created_at|datetime_display }}</div>
                   </div>
                 </div>
               </div>
@@ -335,7 +335,7 @@
               <div class="fw-semibold">{{ st.name }}</div>
               {% if st.name != st.uuid %}<div class="uuid text-muted">{{ st.uuid }}</div>{% endif %}
             </td>
-            <td class="small">{{ st.last_timestamp or '-' }}</td>
+            <td class="small">{{ st.last_timestamp|datetime_display if st.last_timestamp else '-' }}</td>
             <td>
               <form method="post" action="{{ url_for('admin.set_policy') }}" class="d-flex gap-1">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -449,7 +449,7 @@
             <div>
               <div class="fw-semibold">{{ r.email }}</div>
               <div class="small">{{ r.message or 'No reason given.' }}</div>
-              <div class="small text-muted">Request #{{ r.id }} · {{ r.created_at }}</div>
+              <div class="small text-muted">Request #{{ r.id }} · {{ r.created_at|datetime_display }}</div>
             </div>
             <div class="d-flex gap-2">
               <form method="post" action="{{ url_for('admin.approve_request', request_id=r.id) }}">

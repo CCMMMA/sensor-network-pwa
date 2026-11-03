@@ -54,7 +54,7 @@
               </td>
               <td>
                 {% if spec.saved.updated_at %}
-                  {{ spec.saved.updated_at }}<br><span class="text-muted small">{{ spec.saved.updated_by }}</span>
+                  {{ spec.saved.updated_at|datetime_display }}<br><span class="text-muted small">{{ spec.saved.updated_by }}</span>
                 {% else %}
                   <span class="text-muted">default</span>
                 {% endif %}

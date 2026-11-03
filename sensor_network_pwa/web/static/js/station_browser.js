@@ -49,6 +49,20 @@ const pageConfig = JSON.parse(document.getElementById('pageConfig').textContent)
   function compactTime(ms) {
     return new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   }
+  function twoDigits(value) {
+    return String(value).padStart(2, '0');
+  }
+  function displayDate(ms) {
+    const d = new Date(ms);
+    return `${twoDigits(d.getUTCDate())}/${twoDigits(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
+  }
+  function displayTime(ms) {
+    const d = new Date(ms);
+    return `${twoDigits(d.getUTCHours())}:${twoDigits(d.getUTCMinutes())}`;
+  }
+  function displayDateTime(ms) {
+    return `${displayDate(ms)} ${displayTime(ms)}`;
+  }
   const fileStem = `${stationUuid.replace(/[^A-Za-z0-9._-]+/g, '_')}_${compactTime(winStart)}_${compactTime(winEnd)}`;
 
   // ---------------------------------------------------------------- time range and table controls
@@ -208,10 +222,10 @@ const pageConfig = JSON.parse(document.getElementById('pageConfig').textContent)
   function timeLabel(ms, step, previousMs) {
     const iso = new Date(ms).toISOString();
     const day = iso.slice(0, 10);
-    if (step >= 86400000) return [day];
-    const time = step < 60000 ? iso.slice(11, 19) : iso.slice(11, 16);
+    if (step >= 86400000) return [displayDate(ms)];
+    const time = displayTime(ms);
     const dayChanged = previousMs === null || new Date(previousMs).toISOString().slice(0, 10) !== day;
-    return dayChanged ? [time, day] : [time];
+    return dayChanged ? [time, displayDate(ms)] : [time];
   }
 
   // ---------------------------------------------------------------- Chart.js model (screen and PNG)
@@ -312,7 +326,7 @@ const pageConfig = JSON.parse(document.getElementById('pageConfig').textContent)
           tooltip: {
             enabled: !pub,
             callbacks: {
-              title: (items) => (items.length ? new Date(items[0].parsed.x).toISOString().replace('.000Z', 'Z') : '')
+              title: (items) => (items.length ? displayDateTime(items[0].parsed.x) : '')
             }
           }
         },

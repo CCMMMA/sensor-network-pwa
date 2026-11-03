@@ -26,7 +26,7 @@
         </select>
       </div>
       <div class="small text-muted">Last update</div>
-      <div class="fw-semibold" id="lastUpdate">{{ snapshot.last_timestamp or "-" }}</div>
+      <div class="fw-semibold" id="lastUpdate">{{ snapshot.last_timestamp|datetime_display if snapshot.last_timestamp else "-" }}</div>
       {% if can_control %}
         <a class="btn btn-sm btn-outline-secondary mt-2" href="{{ url_for('stations.station_chart_settings', instrument_uuid=snapshot.instrument_uuid) }}">Trend chart axis settings</a>
       {% endif %}

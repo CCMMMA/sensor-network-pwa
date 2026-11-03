@@ -14,6 +14,27 @@ const SECOND_MS = 1000;
 const MINUTE_MS = 60 * SECOND_MS;
 const HOUR_MS = 60 * MINUTE_MS;
 
+function twoDigits(value) {
+  return String(value).padStart(2, '0');
+}
+
+function formatDate(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${twoDigits(d.getUTCDate())}/${twoDigits(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
+}
+
+function formatTime(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${twoDigits(d.getUTCHours())}:${twoDigits(d.getUTCMinutes())}`;
+}
+
+function formatDateTime(value) {
+  const date = formatDate(value);
+  return date ? `${date} ${formatTime(value)}` : '';
+}
+
 function normalizeChartPoints(points) {
   return (points || [])
     .map((p) => {
@@ -67,9 +88,7 @@ function buildWindowTicks(windowCode, xMin, xMax) {
 }
 
 function formatWindowTick(value, windowCode) {
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return formatTime(value);
 }
 
 function windowLabel(windowCode) {
@@ -80,30 +99,19 @@ function windowLabel(windowCode) {
 function formatWindowTickWithDayChange(value, windowCode, index, ticks) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '';
-  if (windowCode === '1m') {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  }
   const prevTick = (Array.isArray(ticks) && index > 0) ? ticks[index - 1] : null;
   const prevDate = prevTick && Number.isFinite(prevTick.value) ? new Date(prevTick.value) : null;
   const dayChanged = !prevDate || prevDate.toDateString() !== d.toDateString();
   const timeLabel = formatWindowTick(value, windowCode);
   if (dayChanged) {
     // Two lines: the date under the time keeps the label as narrow as the others.
-    return [timeLabel, d.toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })];
+    return [timeLabel, formatDate(value)];
   }
   return timeLabel;
 }
 
 function formatStatTimestamp(value) {
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString([], {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
+  return formatDateTime(value);
 }
 
 function cardHtml(card) {
@@ -418,7 +426,7 @@ function applySnapshot(snapshot) {
     windowSelect.value = currentWindow;
   }
   document.getElementById('stationTitle').textContent = `${snapshot.station_name} (${snapshot.instrument_uuid})`;
-  document.getElementById('lastUpdate').textContent = snapshot.last_timestamp || '-';
+  document.getElementById('lastUpdate').textContent = formatDateTime(snapshot.last_timestamp) || '-';
   renderCards(snapshot);
   renderSeries(snapshot);
 }

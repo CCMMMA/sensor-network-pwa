@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from flask import abort, g, redirect, request, session, url_for
 
 from sensor_network_pwa.log import logger
+from sensor_network_pwa.timeutil import format_datetime
 from sensor_network_pwa.web.access import current_user, get_cfg, get_store
 
 COMPRESSIBLE_MIMETYPES = frozenset(
@@ -211,6 +212,7 @@ def init_app(app):
     app.before_request(protect_against_csrf)
     app.before_request(enforce_password_change)
     app.jinja_env.globals["csrf_token"] = csrf_token
+    app.jinja_env.filters["datetime_display"] = format_datetime
     app.after_request(add_security_headers)
     app.after_request(compress_response)
     app.after_request(record_access_event)

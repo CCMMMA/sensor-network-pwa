@@ -54,9 +54,9 @@
         <td>{% if n.is_open %}<span class="badge text-bg-danger">Failure</span>{% else %}<span class="badge text-bg-success">Regular</span>{% endif %}</td>
         <td><a href="{{ url_for('stations.browse_station', instrument_uuid=n.station_uuid) }}">{{ n.station_uuid }}</a></td>
         <td>{{ n.anomaly_type }}{% if n.message %}<div class="small text-muted">{{ n.message }}</div>{% endif %}</td>
-        <td>{{ n.failed_at }}</td>
-        <td>{{ n.resolved_at }}</td>
-        <td>{{ n.last_sent_at }}</td>
+        <td>{{ n.failed_at|datetime_display }}</td>
+        <td>{{ n.resolved_at|datetime_display }}</td>
+        <td>{{ n.last_sent_at|datetime_display }}</td>
         <td>{{ n.state }}</td>
         <td>
           <form method="post" action="{{ url_for('profile.notification_action', notification_id=n.id) }}" class="d-flex flex-wrap gap-1">

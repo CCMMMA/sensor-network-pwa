@@ -25,6 +25,7 @@ from sensor_network_pwa.mailer import drain_email_queue, queue_email
 from sensor_network_pwa.maintenance import backup_database, restore_drill, verify_database
 from sensor_network_pwa.runtime import runtime
 from sensor_network_pwa.storage import iter_csv_files_newest_first, iter_csv_rows, load_station_rows, to_float
+from sensor_network_pwa.timeutil import format_datetime
 from sensor_network_pwa.watchdog import run_watchdog_scan
 from sensor_network_pwa.web import create_web_app, pwa_assets, stations
 from sensor_network_pwa.workflows import run_workflows
@@ -130,6 +131,19 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertNotIn(XSS_FIELD, body)
         island = body.split('<script id="stationBrowseState" type="application/json">')[1].split("</script>")[0]
         self.assertIn(XSS_FIELD, json.loads(island)["numeric_cols"])
+
+    def test_tables_render_timestamps_in_day_first_24_hour_format(self):
+        when = datetime(2025, 1, 2, 23, 7, tzinfo=timezone.utc)
+        self.write_row("formatted", when, {"timestamp": when.isoformat(), "TempOut": 12})
+        body = self.client("bob").get("/station/formatted").get_data(as_text=True)
+        table = body.split('<table class="table table-sm table-striped table-hover mb-0" id="dataTable">')[1].split(
+            "</table>"
+        )[0]
+        self.assertIn("02/01/2025 23:07", table)
+        self.assertNotIn("2025-01-02T23:07", table)
+
+    def test_datetime_display_is_utc_day_first_and_24_hour(self):
+        self.assertEqual(format_datetime("2025-01-02T23:07:59+02:00"), "02/01/2025 21:07")
 
     def test_cross_site_writes_are_rejected(self):
         client = self.client("admin")

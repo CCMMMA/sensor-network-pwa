@@ -7,7 +7,7 @@
   const common = { responsive: true, maintainAspectRatio: false };
   new Chart(document.getElementById('dailyChart'), {
     type: 'bar',
-    data: { labels: daily.map((item) => item.label), datasets: [{ label: 'Events', data: daily.map((item) => item.value), backgroundColor: '#0d6efd' }] },
+    data: { labels: daily.map((item) => item.label.split('-').reverse().join('/')), datasets: [{ label: 'Events', data: daily.map((item) => item.value), backgroundColor: '#0d6efd' }] },
     options: { ...common, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
   });
   new Chart(document.getElementById('typeChart'), {
