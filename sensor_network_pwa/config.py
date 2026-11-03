@@ -76,7 +76,8 @@ def _web_settings(raw: dict, storage_root) -> dict:
         "web_app_logo": _text(raw, ["webAppLogo"], "WEB_APP_LOGO"),
         "web_app_icon": _text(raw, ["webAppIcon"], "WEB_APP_ICON"),
         "web_app_name": _text(raw, ["webAppName"], "WEB_APP_NAME").strip() or "meteo@uniparthenope Sensor Network",
-        "web_app_short_name": _text(raw, ["webAppShortName"], "WEB_APP_SHORT_NAME").strip() or "meteo@uniparthenope",
+        "web_app_short_name": _text(raw, ["webAppShortName"], "WEB_APP_SHORT_NAME").strip()
+        or "network.meteo@uniarthenope",
         "web_app_link": _text(raw, ["webAppLink"], "WEB_APP_LINK", "https://meteo.uniparthenope.it").strip(),
         "web_info_link": _text(raw, ["webInfoLink"], "WEB_INFO_LINK").strip(),
         "web_theme_primary": _theme_color(raw, "webThemePrimary", "WEB_THEME_PRIMARY", "#1f4e79"),

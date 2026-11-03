@@ -11,7 +11,7 @@
   "httpPort": 8080,
   "baseUrl": "http://localhost:8080",
   "webAppName": "meteo@uniparthenope Sensor Network",
-  "webAppShortName": "meteo@uniparthenope",
+  "webAppShortName": "network.meteo@uniarthenope",
   "webAppLogo": "",
   "webAppIcon": "",
   "webAppLink": "https://meteo.uniparthenope.it",

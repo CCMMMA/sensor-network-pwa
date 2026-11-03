@@ -42,7 +42,8 @@ Set (see [configuration](configuration.md)):
 - `/station/<uuid>/chart-settings/export`
 - `/station/<uuid>/chart-settings/import`
 - `/public/station/<uuid>` public station dashboard (not for `restricted` stations, see below)
-- `/manifest.webmanifest`, `/service-worker.js`, `/pwa/icon-<size>.png`, `/offline` progressive web app assets
+- `/manifest.webmanifest`, `/service-worker.js`, versioned `/pwa/icon-v<version>-<size>.png`,
+  and `/offline` progressive web app assets
 - `/static/js/<page>.js`, `/static/css/<page>.css` script and stylesheet of each page (revalidated by the browser on every load, gzip-compressed)
 - `/api/public/station/<uuid>/snapshot` JSON polled by the public dashboard
 - `/api/check-username?username=...&token=...` username availability for the onboarding
@@ -65,7 +66,10 @@ Set (see [configuration](configuration.md)):
 The portal can be installed on phones and desktops ("Add to Home screen" / "Install app").
 
 - every page is an HTML5 document (`<!doctype html>`) and carries the manifest link, theme colour, and icons; they come from the shared `base.html` template that all pages extend
-- the manifest uses `webAppName` and `webAppShortName`; the icons (180, 192, 512 px PNG, also maskable) are resized from the configured application icon
+- the manifest uses `webAppName` and `webAppShortName` (default short name:
+  `network.meteo@uniarthenope`); the icons (180, 192, 512 px PNG, also maskable) are
+  resized from the configured application icon, whose bundled default is derived from
+  the meteo@uniparthenope logo
 - the primary, secondary and accent brand colours are configured with
   `webThemePrimary`, `webThemeSecondary` and `webThemeAccent`; the primary colour
   is also applied to the manifest, browser chrome and generated install icon

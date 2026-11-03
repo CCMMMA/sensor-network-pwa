@@ -83,7 +83,7 @@ def service_worker():
     return response
 
 
-@bp.route("/pwa/icon-<int:size>.png")
+@bp.route("/pwa/icon-v7-<int:size>.png")
 def icon(size: int):
     if size not in PWA_ICON_SIZES:
         abort(404)

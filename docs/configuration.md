@@ -84,11 +84,12 @@ See [database.md](database.md) for production selection, migration, and backup g
 - `webAppName` (`WEB_APP_NAME`): application name in the web manifest, shown when the
   app is installed. Defaults to `meteo@uniparthenope Sensor Network`
 - `webAppShortName` (`WEB_APP_SHORT_NAME`): name under the home-screen icon. Defaults
-  to `meteo@uniparthenope`
+  to `network.meteo@uniarthenope`
 - `webAppLogo`: optional absolute path to the app logo image; the bundled
   meteo@uniparthenope logo is used when empty
 - `webAppIcon` (`WEB_APP_ICON`): optional absolute path to the PNG, JPEG, or WebP
-  application icon; the bundled meteo@uniparthenope icon is used when empty
+  application icon; the bundled square icon derived from the meteo@uniparthenope logo
+  is used when empty
 - `webAppLink`: optional external URL opened when the home-page logo is clicked
 - `webInfoLink`: optional external URL shown as `Info` before `Login` on the home page
 - `webThemePrimary` (`WEB_THEME_PRIMARY`): main brand/navigation and installed-PWA

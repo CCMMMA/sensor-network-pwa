@@ -284,7 +284,7 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertIn("standalone", manifest["display_override"])
         worker = client.get("/service-worker.js").get_data(as_text=True)
         self.assertIn('"/static/css/portal.css"', worker)
-        self.assertIn("sensor-network-pwa-v6", worker)
+        self.assertIn("sensor-network-pwa-v7", worker)
 
     def test_admin_can_manage_persistent_appearance_settings(self):
         client = self.client("admin")
@@ -292,6 +292,9 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertIn('data-bs-target="#settings"', page)
         self.assertIn("Appearance", page)
         self.assertIn("meteo@uniparthenope", page)
+        self.assertIn('value="network.meteo@uniarthenope"', page)
+        manifest = client.get("/manifest.webmanifest").get_json(force=True)
+        self.assertEqual(manifest["short_name"], "network.meteo@uniarthenope")
         icon_path = Path(__file__).parents[1] / "sensor_network_pwa/web/static/images/meteo-uniparthenope-icon.png"
         icon = icon_path.read_bytes()
         response = client.post(
@@ -315,7 +318,7 @@ class WebAndAuthTests(unittest.TestCase):
         manifest = client.get("/manifest.webmanifest").get_json(force=True)
         self.assertEqual(manifest["name"], "Test Weather Portal")
         self.assertEqual(manifest["theme_color"], "#112233")
-        self.assertEqual(client.get("/pwa/icon-512.png").status_code, 200)
+        self.assertEqual(client.get("/pwa/icon-v7-512.png").status_code, 200)
 
         reloaded = create_web_app(dict(self.cfg), self.store).test_client()
         self.assertEqual(reloaded.get("/manifest.webmanifest").get_json(force=True)["name"], "Test Weather Portal")
