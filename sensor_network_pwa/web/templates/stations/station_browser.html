@@ -283,7 +283,7 @@
     <h2 class="h6">Station logo</h2>
     <form method="post" action="{{ url_for('stations.upload_station_logo', instrument_uuid=instrument_uuid) }}" enctype="multipart/form-data" class="d-flex flex-wrap gap-2">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input class="form-control form-control-sm w-auto" type="file" name="logo" accept="image/*" required>
+      <label class="visually-hidden" for="stationLogoFile">Station logo image</label><input id="stationLogoFile" class="form-control form-control-sm w-auto" type="file" name="logo" accept="image/*" required>
       <button class="btn btn-outline-secondary btn-sm" type="submit">Upload logo</button>
     </form>
   </div></div>

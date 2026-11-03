@@ -261,7 +261,7 @@
                     {% if u.username != admin_user.username %}
                     <form method="post" action="{{ url_for('admin.rename_user') }}" class="input-group input-group-sm mb-2">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="username" value="{{ u.username }}">
-                      <span class="input-group-text">Username</span><input class="form-control" name="new_username" value="{{ u.username }}" required>
+                      <span class="input-group-text" id="rename-user-{{ loop.index }}">Username</span><input class="form-control" name="new_username" value="{{ u.username }}" aria-labelledby="rename-user-{{ loop.index }}" required>
                       <button class="btn btn-outline-primary" type="submit">Rename</button>
                     </form>
                     <form method="post" action="{{ url_for('admin.delete_user') }}" class="mb-2">
@@ -349,9 +349,9 @@
       <form method="post" action="{{ url_for('admin.save_station') }}" class="card card-body mb-3">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <h2 class="h6">Add station</h2><div class="row g-2 align-items-end">
-          <div class="col-md-4"><label class="form-label">UUID</label><input class="form-control" name="station_uuid" required></div>
-          <div class="col-md-4"><label class="form-label">Display name</label><input class="form-control" name="display_name"></div>
-          <div class="col-md-2"><label class="form-label">Policy</label><select class="form-select" name="policy"><option value="account">Account</option><option value="open">Open</option><option value="restricted">Restricted</option></select></div>
+          <div class="col-md-4"><label class="form-label" for="newStationUuid">UUID</label><input class="form-control" id="newStationUuid" name="station_uuid" required></div>
+          <div class="col-md-4"><label class="form-label" for="newStationName">Display name</label><input class="form-control" id="newStationName" name="display_name"></div>
+          <div class="col-md-2"><label class="form-label" for="newStationPolicy">Policy</label><select class="form-select" id="newStationPolicy" name="policy"><option value="account">Account</option><option value="open">Open</option><option value="restricted">Restricted</option></select></div>
           <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Add station</button></div>
         </div><div class="form-text">This registers the station in the portal. CSV history remains owned by the collector.</div>
       </form>

@@ -12,7 +12,7 @@
       <a class="btn btn-outline-primary btn-sm" href="{{ url_for('stations.station_chart_settings_export', instrument_uuid=instrument_uuid) }}">Export JSON</a>
       <form id="chartSettingsImportForm" method="post" action="{{ url_for('stations.station_chart_settings_import', instrument_uuid=instrument_uuid) }}" enctype="multipart/form-data" class="d-flex gap-2 align-items-center">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <input id="chartSettingsImportFile" class="form-control form-control-sm" type="file" name="settings_file" accept="application/json,.json" required>
+        <label class="visually-hidden" for="chartSettingsImportFile">Chart settings JSON file</label><input id="chartSettingsImportFile" class="form-control form-control-sm" type="file" name="settings_file" accept="application/json,.json" required>
         <input type="hidden" name="confirm_foreign_station" id="confirmForeignStation" value="0">
         <button class="btn btn-outline-secondary btn-sm" type="submit">Import JSON</button>
       </form>
@@ -41,9 +41,9 @@
             <tr>
               <td><b>{{ spec.label }}</b><br><span class="text-muted small">{{ spec.key }}</span></td>
               <td>{{ spec.unit or '-' }}</td>
-              <td><input class="form-control form-control-sm" type="number" step="any" name="y_min__{{ spec.key }}" value="{{ '' if spec.saved.y_min is none else spec.saved.y_min }}"></td>
-              <td><input class="form-control form-control-sm" type="number" step="any" name="y_max__{{ spec.key }}" value="{{ '' if spec.saved.y_max is none else spec.saved.y_max }}"></td>
-              <td><input class="form-control form-control-sm" type="number" step="any" min="0.000001" name="y_step__{{ spec.key }}" value="{{ '' if spec.saved.y_step is none else spec.saved.y_step }}"></td>
+              <td><input class="form-control form-control-sm" type="number" step="any" name="y_min__{{ spec.key }}" value="{{ '' if spec.saved.y_min is none else spec.saved.y_min }}" aria-label="Minimum y-axis value for {{ spec.label }}"></td>
+              <td><input class="form-control form-control-sm" type="number" step="any" name="y_max__{{ spec.key }}" value="{{ '' if spec.saved.y_max is none else spec.saved.y_max }}" aria-label="Maximum y-axis value for {{ spec.label }}"></td>
+              <td><input class="form-control form-control-sm" type="number" step="any" min="0.000001" name="y_step__{{ spec.key }}" value="{{ '' if spec.saved.y_step is none else spec.saved.y_step }}" aria-label="Y-axis step for {{ spec.label }}"></td>
               <td>
                 {% if effective %}
                   {{ effective.y_min }} .. {{ effective.y_max }}

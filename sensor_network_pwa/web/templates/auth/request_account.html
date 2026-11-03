@@ -10,12 +10,12 @@
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="mb-3">
-          <label class="form-label">Email</label>
-          <input class="form-control" name="email" type="email" required>
+          <label class="form-label" for="requestEmail">Email</label>
+          <input class="form-control" id="requestEmail" name="email" type="email" autocomplete="email" required>
         </div>
         <div class="mb-3">
-          <label class="form-label">Reason</label>
-          <textarea class="form-control" name="reason" rows="4" required></textarea>
+          <label class="form-label" for="requestReason">Reason</label>
+          <textarea class="form-control" id="requestReason" name="reason" rows="4" required></textarea>
         </div>
         <button class="btn btn-primary" type="submit">Submit request</button>
       </form>

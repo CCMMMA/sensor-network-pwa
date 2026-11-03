@@ -25,7 +25,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="station_uuid" value="{{ a.station_uuid }}">
             <input type="hidden" name="anomaly_type" value="{{ a.anomaly_type }}">
-            <input class="form-control form-control-sm" style="max-width:110px" type="number" min="1" max="24" name="hours" value="24">
+            <input class="form-control form-control-sm" style="max-width:110px" type="number" min="1" max="24" name="hours" value="24" aria-label="Snooze hours for {{ a.station_uuid }} {{ a.anomaly_type }}">
             <button class="btn btn-warning btn-sm" type="submit">Silence</button>
           </form>
           {% endif %}

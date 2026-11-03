@@ -833,6 +833,25 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertEqual(client.get("/docs/assets/../README.md").status_code, 404)
         self.assertEqual(client.get("/docs/not-a-guide").status_code, 404)
 
+    def test_interactive_controls_have_accessible_names_and_keyboard_support(self):
+        login = self.client().get("/login").get_data(as_text=True)
+        self.assertIn('label class="form-label" for="loginUsername"', login)
+        self.assertIn('id="loginUsername" name="username" autocomplete="username" required', login)
+        self.assertIn('label class="form-label" for="loginPassword"', login)
+
+        docs = self.client().get("/docs").get_data(as_text=True)
+        self.assertIn('for="docsSearch">Search documentation</label>', docs)
+
+        settings = self.client("admin").get("/station/station/chart-settings").get_data(as_text=True)
+        self.assertIn('aria-label="Minimum y-axis value for', settings)
+        self.assertIn('aria-label="Maximum y-axis value for', settings)
+        self.assertIn('aria-label="Y-axis step for', settings)
+
+        workflow_script = (Path(__file__).parents[1] / "sensor_network_pwa/web/static/js/workflows.js").read_text()
+        self.assertIn("element.tabIndex = 0", workflow_script)
+        self.assertIn('path.setAttribute("tabindex", "0")', workflow_script)
+        self.assertIn('event.key === "Enter" || event.key === " "', workflow_script)
+
     def test_page_config_island_escapes_station_values(self):
         hostile = "<img src=x onerror=alert(1)>&'"
         self.write_row(hostile, self.now, {"timestamp": self.now.isoformat(), "TempOut": 1, "HumOut": 2})

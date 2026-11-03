@@ -8,7 +8,7 @@
     <div class="docs-sidebar-sticky">
       <a class="docs-home" href="{{ url_for('public.documentation') }}">Documentation</a>
       <label class="visually-hidden" for="docsSearch">Search documentation</label>
-      <input id="docsSearch" class="form-control" type="search" placeholder="Search all guides…" autocomplete="off">
+      <label class="visually-hidden" for="docsSearch">Search documentation</label><input id="docsSearch" class="form-control" type="search" placeholder="Search all guides…" autocomplete="off">
       <div id="docsSearchResults" class="docs-search-results" aria-live="polite"></div>
       <nav class="docs-nav mt-3">
         {% for page in pages %}<a href="{{ page.url }}"{% if page.slug == current.slug %} class="active" aria-current="page"{% endif %}>{{ page.title }}</a>{% endfor %}

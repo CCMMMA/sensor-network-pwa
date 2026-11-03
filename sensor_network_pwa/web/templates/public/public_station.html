@@ -18,7 +18,7 @@
     </div>
     <div class="text-end">
       <div class="mb-2">
-        <label class="small text-muted">Trend window</label>
+        <label class="small text-muted" for="windowSelect">Trend window</label>
         <select id="windowSelect" class="form-select form-select-sm">
           {% for code, label in window_options %}
             <option value="{{ code }}" {% if code == selected_window %}selected{% endif %}>{{ label }}</option>

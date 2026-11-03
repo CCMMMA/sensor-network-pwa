@@ -51,7 +51,9 @@
       const element = document.createElement("div");
       element.className = `flow-node node-${node.type}${selectedNode === node.id ? " selected" : ""}`;
       element.dataset.id = node.id; element.style.left = `${node.x}px`; element.style.top = `${node.y}px`;
-      element.innerHTML = `<div class="node-title">${escapeHtml(nodeTitle(node))}<button type="button" class="node-remove" title="Remove node" aria-label="Remove node">×</button></div><div class="node-body">${escapeHtml(nodeSummary(node))}</div>${node.type !== "station" ? '<button type="button" class="port in" data-port="in" aria-label="Input"></button>' : ""}${node.type !== "email" ? '<button type="button" class="port out" data-port="out" aria-label="Output"></button>' : ""}`;
+      element.tabIndex = 0; element.setAttribute("role", "button");
+      element.setAttribute("aria-label", `${nodeTitle(node)}: ${nodeSummary(node)}. Select to edit.`);
+      element.innerHTML = `<div class="node-title">${escapeHtml(nodeTitle(node))}<button type="button" class="node-remove" title="Remove node" aria-label="Remove ${escapeHtml(nodeTitle(node))} node">×</button></div><div class="node-body">${escapeHtml(nodeSummary(node))}</div>${node.type !== "station" ? `<button type="button" class="port in" data-port="in" aria-label="Connect into ${escapeHtml(nodeTitle(node))}"></button>` : ""}${node.type !== "email" ? `<button type="button" class="port out" data-port="out" aria-label="Start connection from ${escapeHtml(nodeTitle(node))}"></button>` : ""}`;
       nodesEl.appendChild(element); bindNode(element, node);
     }
     drawEdges(); renderEditor();
@@ -61,6 +63,11 @@
     element.addEventListener("click", event => {
       if (event.target.classList.contains("port")) { portClick(node, event.target); return; }
       selectedNode = node.id; selectedEdge = null; render();
+    });
+    element.addEventListener("keydown", event => {
+      if ((event.key === "Enter" || event.key === " ") && event.target === element) {
+        event.preventDefault(); selectedNode = node.id; selectedEdge = null; render();
+      }
     });
     const title = element.querySelector(".node-title");
     title.addEventListener("pointerdown", event => {
@@ -96,8 +103,9 @@
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       path.setAttribute("d", `M${x1},${y1} C${x1 + 80},${y1} ${x2 - 80},${y2} ${x2},${y2}`);
       path.setAttribute("class", `flow-edge${selectedEdge === index ? " selected" : ""}`);
-      path.setAttribute("role", "button"); path.setAttribute("aria-label", `Edit connection from ${edge.source} to ${edge.target}`);
+      path.setAttribute("role", "button"); path.setAttribute("tabindex", "0"); path.setAttribute("aria-label", `Edit connection from ${edge.source} to ${edge.target}`);
       path.addEventListener("click", event => { event.stopPropagation(); selectedNode = null; selectedEdge = index; render(); });
+      path.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectedNode = null; selectedEdge = index; render(); } });
       svg.appendChild(path);
     });
   }
@@ -107,7 +115,7 @@
   function renderEditor() {
     if (selectedEdge !== null && edges[selectedEdge]) {
       const edge = edges[selectedEdge]; editor.className = "";
-      editor.innerHTML = `<h3 class="h6">Connection</h3><label class="form-label">From</label><select class="form-select mb-2" data-edge-key="source">${edgeOptions(edge.source,"source")}</select><label class="form-label">To</label><select class="form-select mb-3" data-edge-key="target">${edgeOptions(edge.target,"target")}</select><button type="button" class="btn btn-outline-danger btn-sm" id="removeEdge">Remove connection</button>`;
+      editor.innerHTML = `<h3 class="h6">Connection</h3><label class="form-label" for="edgeSource">From</label><select id="edgeSource" class="form-select mb-2" data-edge-key="source">${edgeOptions(edge.source,"source")}</select><label class="form-label" for="edgeTarget">To</label><select id="edgeTarget" class="form-select mb-3" data-edge-key="target">${edgeOptions(edge.target,"target")}</select><button type="button" class="btn btn-outline-danger btn-sm" id="removeEdge">Remove connection</button>`;
       editor.querySelectorAll("[data-edge-key]").forEach(input => input.addEventListener("change", () => { edge[input.dataset.edgeKey] = input.value; drawEdges(); }));
       document.getElementById("removeEdge").addEventListener("click", () => { edges.splice(selectedEdge, 1); selectedEdge = null; render(); });
       return;
@@ -115,9 +123,9 @@
     const node = nodes.find(item => item.id === selectedNode);
     if (!node) { editor.className = "text-muted small"; editor.textContent = "Select a node or connection."; return; }
     editor.className = "";
-    if (node.type === "station") editor.innerHTML = `<label class="form-label">Station</label><select class="form-select" data-key="station">${config.stations.map(station => `<option ${station === node.data.station ? "selected" : ""}>${escapeHtml(station)}</option>`).join("")}</select>`;
-    else if (node.type === "condition") editor.innerHTML = `<label class="form-label">Field</label><input class="form-control mb-2" data-key="field" value="${escapeHtml(node.data.field)}"><label class="form-label">Operator</label><select class="form-select mb-2" data-key="operator">${[">",">=","<","<=","==","!="].map(operator => `<option ${operator === node.data.operator ? "selected" : ""}>${escapeHtml(operator)}</option>`).join("")}</select><label class="form-label">Value</label><input class="form-control" type="number" step="any" data-key="value" value="${escapeHtml(node.data.value)}">`;
-    else editor.innerHTML = `<label class="form-label">Recipient</label><input class="form-control" type="email" data-key="recipient" value="${escapeHtml(node.data.recipient)}">`;
+    if (node.type === "station") editor.innerHTML = `<label class="form-label" for="nodeStation">Station</label><select id="nodeStation" class="form-select" data-key="station">${config.stations.map(station => `<option ${station === node.data.station ? "selected" : ""}>${escapeHtml(station)}</option>`).join("")}</select>`;
+    else if (node.type === "condition") editor.innerHTML = `<label class="form-label" for="nodeField">Field</label><input id="nodeField" class="form-control mb-2" data-key="field" value="${escapeHtml(node.data.field)}"><label class="form-label" for="nodeOperator">Operator</label><select id="nodeOperator" class="form-select mb-2" data-key="operator">${[">",">=","<","<=","==","!="].map(operator => `<option ${operator === node.data.operator ? "selected" : ""}>${escapeHtml(operator)}</option>`).join("")}</select><label class="form-label" for="nodeValue">Value</label><input id="nodeValue" class="form-control" type="number" step="any" data-key="value" value="${escapeHtml(node.data.value)}">`;
+    else editor.innerHTML = `<label class="form-label" for="nodeRecipient">Recipient</label><input id="nodeRecipient" class="form-control" type="email" data-key="recipient" value="${escapeHtml(node.data.recipient)}">`;
     editor.querySelectorAll("[data-key]").forEach(input => input.addEventListener("input", () => {
       node.data[input.dataset.key] = input.type === "number" ? Number(input.value) : input.value;
       const body = document.querySelector(`[data-id="${CSS.escape(node.id)}"] .node-body`); if (body) body.textContent = nodeSummary(node);
