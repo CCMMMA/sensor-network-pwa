@@ -1,9 +1,8 @@
 {#- The worker keeps only static assets and the offline page: pages and API responses
     depend on the logged-in user and are always fetched from the network. -#}
-const CACHE = 'sensor-network-pwa-v8';
+const CACHE = 'sensor-network-pwa-v9';
 const OFFLINE_URL = {{ offline_url | tojson }};
 const PRECACHE = {{ precache | tojson }};
-const STATIC_HOSTS = ['cdn.jsdelivr.net', 'unpkg.com'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -26,7 +25,7 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
-  if (STATIC_HOSTS.includes(url.hostname) || PRECACHE.includes(url.pathname)) {
+  if (url.origin === self.location.origin && PRECACHE.includes(url.pathname)) {
     event.respondWith(
       caches.open(CACHE).then(async (cache) => {
         const cached = await cache.match(request);
@@ -35,7 +34,7 @@ self.addEventListener('fetch', (event) => {
             if (response.ok) cache.put(request, response.clone());
             return response;
           })
-          .catch(() => cached);
+          .catch(() => cached || Response.error());
         return cached || refresh;
       })
     );
@@ -43,6 +42,8 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).catch(() => caches.match(OFFLINE_URL)));
+    event.respondWith(
+      fetch(request).catch(async () => (await caches.match(OFFLINE_URL)) || Response.error())
+    );
   }
 });

@@ -74,8 +74,9 @@ The portal can be installed on phones and desktops ("Add to Home screen" / "Inst
   `webThemePrimary`, `webThemeSecondary` and `webThemeAccent`; the primary colour
   is also applied to the manifest, browser chrome and generated install icon
 - browsers that support it show a Bootstrap `Install app` button in the bottom-right corner; a Bootstrap alert appears while the device is offline
-- the service worker precaches the offline shell, core portal styles/scripts, manifest
-  and icons, and runtime-caches Bootstrap, Leaflet, and Chart.js assets from their CDNs
+- the service worker precaches the offline shell, core same-origin portal styles/scripts,
+  manifest and icons; CDN assets such as Bootstrap, Leaflet, and Chart.js use the browser's
+  normal network and HTTP cache path
 - pages and `/api/` responses are never cached, because they depend on the logged-in user and on live data; when a page cannot be loaded the offline page is shown
 - installation needs a secure context: HTTPS, or `http://localhost` during development
 - the service worker scope is the application root; behind a reverse proxy serve the application at the root of its host name

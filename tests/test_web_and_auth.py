@@ -298,7 +298,7 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertIn("standalone", manifest["display_override"])
         worker = client.get("/service-worker.js").get_data(as_text=True)
         self.assertIn('"/static/css/portal.css"', worker)
-        self.assertIn("sensor-network-pwa-v8", worker)
+        self.assertIn("sensor-network-pwa-v9", worker)
 
     def test_admin_can_manage_persistent_appearance_settings(self):
         client = self.client("admin")
@@ -740,7 +740,11 @@ class WebAndAuthTests(unittest.TestCase):
         worker = client.get("/service-worker.js")
         self.assertEqual(worker.mimetype, "text/javascript")
         self.assertEqual(worker.headers["Cache-Control"], "no-cache")
-        self.assertIn('"/offline"', worker.get_data(as_text=True))
+        worker_body = worker.get_data(as_text=True)
+        self.assertIn('"/offline"', worker_body)
+        self.assertIn("url.origin === self.location.origin", worker_body)
+        self.assertNotIn("STATIC_HOSTS", worker_body)
+        self.assertIn("Response.error()", worker_body)
 
     def test_pages_load_their_scripts_and_styles_from_static_files(self):
         client = self.client("admin")
