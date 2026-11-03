@@ -3,7 +3,7 @@
 Authenticated pages and API responses are sent with `Cache-Control: no-store` so private station and account data are not retained by browser or intermediary caches. All responses deny framing, and deployments whose `baseUrl` uses HTTPS send a one-year HSTS policy. Keep `baseUrl` aligned with the public URL; only enable HTTPS there when the portal is consistently available over HTTPS.
 
 Browser writes use a per-session CSRF token in addition to Origin/Referer checks.
-Login and password-reset attempts are throttled in the shared SQLite database, so
+Login and password-reset attempts are throttled in the shared SQLAlchemy database, so
 limits apply across Gunicorn workers. A Content Security Policy restricts scripts and
 styles to this origin plus the UI CDN origins, blocks plugins and framing, and allows
 HTTPS map imagery.
@@ -20,7 +20,7 @@ prove that edge acquisition is healthy; verify each boundary independently.
 | Watchdog | `python main.py --config <config> --watchdog-only` | Anomaly detection, workflow evaluation and emails; exactly one |
 | Development | `python main.py --config <config>` | Flask development server and watchdog in one process |
 
-All of them share the SQLite database and need the same `webSessionSecret` (when it
+All of them share the application database and need the same `webSessionSecret` (when it
 is unset, the web processes share a generated secret kept in that database). MQTT
 ingest and the CSV files belong to
 [`sensor-network-collector`](https://github.com/CCMMMA/sensor-network-collector).
@@ -48,7 +48,7 @@ edge-triggered execution.
 
 ## Backup and restore
 
-The SQLite database holds account data, hashed API tokens, workflows, workflow firing state, permissions,
+The application database holds account data, hashed API tokens, workflows, workflow firing state, permissions,
 anomaly/notification state, the outgoing email queue, administrator impersonation audit events, and the
 user access/download log; the configuration holds secrets. Administrators can inspect and export that log at
 `/admin/access-log`.

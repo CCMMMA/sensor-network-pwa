@@ -1,7 +1,6 @@
 """User accounts, authentication and passwords."""
 
-import sqlite3
-
+from sqlalchemy.exc import IntegrityError, OperationalError
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from sensor_network_pwa.access_store.base import StoreBase
@@ -184,9 +183,9 @@ class UsersMixin(StoreBase):
                         (username, generate_password_hash(password), email.strip(), role, int(active), now_utc_iso()),
                     )
                 return True, "User created"
-            except sqlite3.IntegrityError:
+            except IntegrityError:
                 return False, "User already exists"
-            except sqlite3.OperationalError as e:
+            except OperationalError as e:
                 if self._is_readonly_error(e):
                     return (
                         False,

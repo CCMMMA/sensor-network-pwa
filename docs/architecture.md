@@ -32,7 +32,7 @@ path represents administrative policy and workflow definitions.*
 
 `create_web_app` builds an application without global application state. Request hooks
 enforce cross-site write checks, forced password changes, security headers and gzip.
-Blueprint views obtain configuration and the SQLite access store through `web/access.py`.
+Blueprint views obtain configuration and the SQLAlchemy access store through `web/access.py`.
 CSV queries are bounded by time and discover files newest-first, avoiding whole-history
 scans on request paths.
 
@@ -41,7 +41,7 @@ scans on request paths.
 The **data plane** comprises observation payloads, hourly CSV files, optional InfluxDB
 series, query responses and ZIP downloads. The **control plane** comprises users,
 station policies, permissions, chart settings, API-token hashes, workflow graphs,
-anomaly state and queued email. Control-plane records reside in SQLite and must be
+anomaly state and queued email. Control-plane records reside in the configured database and must be
 backed up together with configuration; observation retention is administered separately.
 
 ## Trust boundaries

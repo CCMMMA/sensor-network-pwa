@@ -34,7 +34,7 @@ cp config.json.sample config.prod.json
 Required keys:
 
 - `pathStorage` (the collector's storage root)
-- `authDbPath`
+- `databaseUrl` (or legacy `authDbPath` for SQLite)
 - `webSessionSecret`
 - `adminPassword`
 - `baseUrl` (must match public URL for email fast-login and password-reset links)
@@ -159,7 +159,7 @@ Start from the repository sample and adapt it for container paths:
   "pathStorage": "/data/storage",
   "httpHost": "0.0.0.0",
   "httpPort": 8080,
-  "authDbPath": "/data/collector_auth.sqlite",
+  "databaseUrl": "",
   "webSessionSecret": "replace-with-strong-random-secret",
   "adminUser": "admin",
   "adminPassword": "replace-with-strong-password",
@@ -172,7 +172,7 @@ Start from the repository sample and adapt it for container paths:
 
 Important:
 
-- `pathStorage` and `authDbPath` must point to writable paths inside the container
+- `pathStorage` must point to a writable path; the configured database must be reachable
 - `httpHost` must be `0.0.0.0`
 - `httpPort` stays `8080` inside the application container
 - `baseUrl` must match the public external URL seen by users, not `http://host:8087`
@@ -372,7 +372,7 @@ docker compose restart watchdog
 ### 9. Common mistakes
 
 - `baseUrl` set to `http://host:8087` instead of the final public URL
-- `authDbPath` mounted read-only
+- database credentials, connectivity, or write permissions are invalid
 - `pathStorage` not mounted to persistent storage
 - publishing `8080` directly and bypassing Nginx unintentionally
 - forgetting to forward `X-Forwarded-Proto` from the outer reverse proxy

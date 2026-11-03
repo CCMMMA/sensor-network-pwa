@@ -17,7 +17,7 @@ Set (see [configuration](configuration.md)):
   "pathStorage": "/data/storage",
   "httpHost": "0.0.0.0",
   "httpPort": 8080,
-  "authDbPath": "/data/collector_auth.sqlite",
+  "databaseUrl": "",
   "webSessionSecret": "replace-with-strong-secret"
 }
 ```
@@ -386,7 +386,7 @@ Behavior:
 - when all three values are empty, the dashboard computes a best-fit automatic axis range and interval
 - when one or more values are set, the saved values override the automatic Y-axis calculation for that station/chart
 - `y_step` controls the chart tick interval on the Y-axis
-- saved settings are read from the auth SQLite database and applied to the public dashboard without requiring configuration-file changes
+- saved settings are read from the application database and applied to the public dashboard without requiring configuration-file changes
 
 Management flow:
 
@@ -414,7 +414,7 @@ Use cases:
 
 - copy the same chart policy between environments
 - back up a station dashboard setup
-- version-control station chart settings outside the SQLite database
+- version-control station chart settings outside the application database
 
 JSON payload structure:
 
@@ -506,7 +506,7 @@ Behavior details:
 
 ## Anomaly log and silencing
 
-- anomalies are persisted in auth SQLite DB
+- anomalies are persisted in the application database
 - admins see full log
 - non-admin users see only stations they can access
 - users can silence specific anomalies for 1..24 hours; this stops the failure and
@@ -575,7 +575,7 @@ delivery.
 - station dashboard also remembers selected trend interval in a browser cookie
 - when a public dashboard trend window is changed, trend chart x-axis is recomputed to match the selected time window
 - when the plotted range crosses a day boundary, the x-axis prints the full date at the tick where the day changes
-- public station dashboard trend chart Y-axis settings are loaded per station from the auth SQLite DB
+- public station dashboard trend chart Y-axis settings are loaded per station from the application database
 - Y-axis step size is applied directly to chart ticks when configured
 - public station dashboard includes a combined `Wind` trend chart with:
   - wind direction as a line on the left Y-axis
@@ -607,7 +607,7 @@ Connectivity alarms are based on dynamic threshold:
 
 - station marked failing when latest data age > `2 * usual update interval`
 
-## SQLite auth DB contents
+## Application database contents
 
 The auth database now stores:
 
@@ -658,4 +658,4 @@ The auth database now stores:
 - set strong `webSessionSecret` (a sample value is never used: a generated secret from the auth DB replaces it)
 - change default admin credentials
 - run behind TLS reverse proxy
-- keep `authDbPath` on secure persistent volume
+- keep the database on secure persistent storage and its URL in a secret store

@@ -1,4 +1,19 @@
 services:
+  database:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sensor_network
+      POSTGRES_USER: sensor_network
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sensor_network -d sensor_network"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   web:
     build:
       context: .
@@ -9,6 +24,10 @@ services:
     command: ["gunicorn", "--workers", "2", "--timeout", "60", "--max-requests", "1000", "--max-requests-jitter", "100", "--access-logfile", "-", "--bind", "0.0.0.0:8080", "--worker-tmp-dir", "/tmp", "webapp_wsgi:app"]
     environment:
       PWA_CONFIG: /app/config.json
+      DATABASE_URL: postgresql+psycopg://sensor_network:${POSTGRES_PASSWORD}@database/sensor_network
+    depends_on:
+      database:
+        condition: service_healthy
     volumes:
       - ./config.json:/app/config.json:ro
       # Same host directory that sensor-network-collector mounts as /data.
@@ -24,8 +43,16 @@ services:
     restart: unless-stopped
     init: true
     command: ["python", "main.py", "--config", "/app/config.json", "--watchdog-only"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://sensor_network:${POSTGRES_PASSWORD}@database/sensor_network
+    depends_on:
+      database:
+        condition: service_healthy
     volumes:
       - ./config.json:/app/config.json:ro
       - ./data:/data
     healthcheck:
       disable: true
+
+volumes:
+  postgres-data:

@@ -18,6 +18,7 @@ from flask.testing import FlaskClient
 from sensor_network_pwa.access_store import AccessStore
 from sensor_network_pwa.config import load_config
 from sensor_network_pwa.dashboard import build_public_station_snapshot
+from sensor_network_pwa.db_migrate import migrate_sqlite
 from sensor_network_pwa.influx import init_influx_runtime
 from sensor_network_pwa.log import logger
 from sensor_network_pwa.mailer import drain_email_queue, queue_email
@@ -185,6 +186,14 @@ class WebAndAuthTests(unittest.TestCase):
         with sqlite3.connect(backup) as con:
             self.assertEqual(con.execute("SELECT COUNT(*) FROM users").fetchone()[0], 2)
         restore_drill(Path(self.cfg["auth_db_path"]))
+
+    def test_sqlite_database_migration_copies_and_verifies_all_tables(self):
+        self.store.create_user("migrated", "Secure-password-123", "migrated@example.org")
+        destination = Path(self.temp.name) / "migrated.sqlite"
+        counts = migrate_sqlite(Path(self.cfg["auth_db_path"]), f"sqlite:///{destination}")
+        migrated = AccessStore(f"sqlite:///{destination}")
+        self.assertIsNotNone(migrated.get_user("migrated"))
+        self.assertEqual(counts["users"], 3)
 
     def test_session_cookie_and_security_headers(self):
         response = self.app.test_client().post("/login", data={"username": "bob", "password": STRONG})

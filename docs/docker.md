@@ -3,7 +3,7 @@
 ## Files
 
 - `Dockerfile`: image whose default command is Gunicorn serving `webapp_wsgi:app` on port 8080
-- `docker-compose.yml.sample`: `web` (Gunicorn) and `watchdog` services
+- `docker-compose.yml.sample`: PostgreSQL, `web` (Gunicorn), and `watchdog` services
 - `config.json.sample`
 - `nginx/default.conf`: optional local reverse proxy, see [WSGI setup](wsgi.md)
 
@@ -15,6 +15,7 @@ unprivileged `10001:10001` user. Dependabot proposes digest and dependency updat
 
 ```bash
 cp docker-compose.yml.sample docker-compose.yml
+printf 'POSTGRES_PASSWORD=replace-with-a-long-random-secret\n' > .env
 cp config.json.sample config.json
 ```
 
@@ -23,7 +24,7 @@ Use container paths in `config.json`:
 ```json
 {
   "pathStorage": "/data/storage",
-  "authDbPath": "/data/collector_auth.sqlite",
+  "databaseUrl": "",
   "baseUrl": "https://portal.example.org"
 }
 ```
@@ -37,7 +38,9 @@ Important:
 - Set a strong `webSessionSecret` and `adminPassword`.
 - Set `baseUrl` to the public HTTPS URL used by browsers.
 - Use network-reachable hostnames for InfluxDB/SMTP, not `localhost`.
-- The process user needs write access to `authDbPath` and `<pathStorage>/_logos`.
+- Compose injects `DATABASE_URL` for PostgreSQL. Do not commit `.env`; use Docker secrets or
+  your orchestrator's secret store in a production cluster.
+- The process user needs write access to `<pathStorage>/_logos`.
 - On Linux, make writable bind mounts accessible to UID/GID 10001, for example
   `sudo chown -R 10001:10001 ./data`. Do not make the directory world-writable.
 

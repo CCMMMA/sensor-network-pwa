@@ -21,6 +21,7 @@
   "mapTileUrl": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
   "mapTileAttribution": "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors",
   "authDbPath": "/tmp/sensor-network-collector/collector_auth.sqlite",
+  "databaseUrl": "",
   "webSessionSecret": "replace-with-a-strong-random-secret",
   "privacyControllerName": "Replace with the legal name of the data controller",
   "privacyControllerContact": "privacy@example.org",

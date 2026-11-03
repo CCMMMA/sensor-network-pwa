@@ -60,11 +60,16 @@ def _theme_color(raw: dict, key: str, env_name: str, default: str) -> str:
 
 
 def _web_settings(raw: dict, storage_root) -> dict:
+    auth_db_path = _text(raw, ["authDbPath"], "AUTH_DB_PATH") or (
+        str(Path(storage_root) / "collector_auth.sqlite") if storage_root else "collector_auth.sqlite"
+    )
     return {
         "http_host": str(cfg_value(raw, ["httpHost"], env_name="HTTP_HOST", default="0.0.0.0")),
         "http_port": int(cfg_value(raw, ["httpPort"], env_name="HTTP_PORT", default=8080)),
-        "auth_db_path": _text(raw, ["authDbPath"], "AUTH_DB_PATH")
-        or (str(Path(storage_root) / "collector_auth.sqlite") if storage_root else "collector_auth.sqlite"),
+        # databaseUrl is preferred. authDbPath remains a backwards-compatible
+        # SQLite shorthand and is also used by the SQLite backup utilities.
+        "auth_db_path": auth_db_path,
+        "database_url": _text(raw, ["databaseUrl"], "DATABASE_URL") or f"sqlite:///{Path(auth_db_path).resolve()}",
         "web_session_secret": _text(raw, ["webSessionSecret"], "WEB_SESSION_SECRET"),
         "admin_user": _text(raw, ["adminUser"], "ADMIN_USER", "admin"),
         "admin_password": _text(raw, ["adminPassword"], "ADMIN_PASSWORD", "admin"),

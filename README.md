@@ -44,7 +44,8 @@ project only reads that data and serves it. It never connects to MQTT.
 - Python 3.10+ (CI checks 3.10–3.14; Docker uses 3.11)
 - Read access to the collector's `pathStorage` directory, with write access to its
   `_logos` subdirectory for station logo uploads
-- A writable location for the SQLite database (`authDbPath`)
+- A database configured with `databaseUrl`/`DATABASE_URL` (PostgreSQL recommended in production),
+  or a writable SQLite location (`authDbPath`) for development
 - Optional: the collector's InfluxDB v2 bucket (read token), an SMTP relay
 
 ```bash
@@ -85,7 +86,8 @@ and watchdog services from the same image (see [Docker deployment](docs/docker.m
 | Key | Purpose |
 | --- | --- |
 | `pathStorage` | Storage root written by the collector (read here, plus `_logos` for uploads) |
-| `authDbPath` | SQLite file for accounts, permissions, workflows, anomalies, and chart settings |
+| `databaseUrl` | SQLAlchemy database URL; use PostgreSQL in production (environment: `DATABASE_URL`) |
+| `authDbPath` | Backwards-compatible SQLite file used when `databaseUrl` is unset |
 | `baseUrl` | URL users open; used in email links and to accept form submissions |
 | `webSessionSecret` | Secret signing the session cookies |
 | `webAppName`, `webAppShortName` | Names shown when the app is installed |
@@ -104,7 +106,7 @@ Most keys can also come from environment variables; see the
 main.py                    command-line entry point (development server + watchdog)
 sensor_network_pwa/        application package
   config.py, log.py, runtime.py       configuration, logging, process-wide state
-  access_store/, validation.py        SQLite auth database (one mixin per concern), input validation
+  access_store/, validation.py        SQLAlchemy application database (one mixin per concern), validation
   storage.py, influx.py               collector CSV readers, optional InfluxDB queries
   intervals.py, charts.py, dashboard.py   time windows, chart settings, public dashboard model
   anomalies.py, workflows.py              anomaly and user-workflow evaluation

@@ -1,9 +1,9 @@
 """Account requests and their single-use onboarding tokens."""
 
 import secrets
-import sqlite3
 from datetime import timedelta
 
+from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash
 
 from sensor_network_pwa.access_store.users import UsersMixin
@@ -149,6 +149,6 @@ class AccountRequestsMixin(UsersMixin):
                         "UPDATE account_requests SET username = ?, status = 'completed' WHERE id = ?",
                         (username, int(request_row["id"])),
                     )
-            except sqlite3.IntegrityError:
+            except IntegrityError:
                 return False, "Username already exists"
         return True, "Account created"

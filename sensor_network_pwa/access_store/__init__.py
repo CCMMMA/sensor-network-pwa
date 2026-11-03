@@ -1,4 +1,4 @@
-"""SQLite auth database: users, account requests, tokens, station policies, anomalies, notifications, logos,
+"""SQLAlchemy-backed application database: users, account requests, tokens, policies, notifications, logos,
 chart settings and the generated session secret.
 
 Each concern is a mixin over StoreBase; AccessStore combines them.
@@ -43,6 +43,6 @@ class AccessStore(
 
 
 def open_access_store(cfg: dict) -> AccessStore:
-    access_store = AccessStore(cfg["auth_db_path"])
+    access_store = AccessStore(cfg.get("database_url") or cfg["auth_db_path"])
     access_store.ensure_admin(cfg["admin_user"], cfg["admin_password"])
     return access_store

@@ -5,7 +5,7 @@
 `loginRateLimit` (default 10) and `loginRateWindowSec` (default 300) limit login
 attempts per source address and normalized username. `resetRateLimit` (default 5) and
 `resetRateWindowSec` (default 3600) similarly protect password-reset requests. Counts
-are stored in `authDbPath`, so all web workers share them. Environment equivalents are
+are stored in the SQLAlchemy application database, so all web workers share them. Environment equivalents are
 `LOGIN_RATE_LIMIT`, `LOGIN_RATE_WINDOW_SEC`, `RESET_RATE_LIMIT`, and
 `RESET_RATE_WINDOW_SEC`.
 
@@ -24,6 +24,7 @@ are ignored, so a configuration file shared with the collector works unchanged.
 {
   "pathStorage": "/data/storage",
   "authDbPath": "/data/collector_auth.sqlite",
+  "databaseUrl": "",
   "webSessionSecret": "replace-with-strong-secret",
   "adminUser": "admin",
   "adminPassword": "replace-with-strong-password",
@@ -58,14 +59,18 @@ are ignored, so a configuration file shared with the collector works unchanged.
 - `baseUrl`: public URL used in email links (fast-login, onboarding, password reset);
   its host is also accepted as a valid origin for form submissions. Defaults to
   `http://<httpHost>:<httpPort>`
-- `authDbPath`: SQLite file for users, account requests, station policies and
+- `databaseUrl`: SQLAlchemy URL for the application database. `DATABASE_URL` is preferred
+  for production secrets; PostgreSQL (`postgresql+psycopg://...`) is recommended.
+- `authDbPath`: backwards-compatible SQLite file for users, account requests, station policies and
   assignments, API/workflow permissions and hashed API tokens, workflows and firing state, chart-control rights,
   chart axis settings, anomaly log and silence windows, station logos. Defaults to
   `<pathStorage>/collector_auth.sqlite`
 - `webSessionSecret`: strong random secret used to sign session cookies. When it is
   empty or still a documented sample value (`replace-with-...`), the application
   generates a random secret once, stores it in the auth database, and logs a warning;
-  all workers sharing `authDbPath` then use that stored secret
+  all workers sharing the database then use that stored secret
+
+See [database.md](database.md) for production selection, migration, and backup guidance.
 - `privacyControllerName`, `privacyControllerContact`: controller identity and contact
   shown in the public privacy notice; complete both before processing personal data
 - `privacyDpoContact`: optional DPO contact, when a DPO has been designated

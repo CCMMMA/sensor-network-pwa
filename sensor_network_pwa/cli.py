@@ -3,9 +3,10 @@
 import argparse
 import contextlib
 import signal
-import sqlite3
 import sys
 import threading
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from sensor_network_pwa.access_store import open_access_store
 from sensor_network_pwa.config import load_config
@@ -53,7 +54,7 @@ def main():
 
     try:
         access_store = open_access_store(cfg)
-    except (RuntimeError, OSError, sqlite3.Error) as e:
+    except (RuntimeError, OSError, SQLAlchemyError) as e:
         logger.error("Cannot open the auth database: %s", e)
         sys.exit(1)
     runtime["access_store"] = access_store
