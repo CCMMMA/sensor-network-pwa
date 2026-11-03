@@ -31,7 +31,7 @@
     <div class="collapse navbar-collapse" id="portalNav">
       <ul class="navbar-nav ms-auto align-items-lg-center gap-lg-1">
         <li class="nav-item"><a class="nav-link" href="{{ url_for('public.index') }}">Stations</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('public.workflows_api_documentation') }}">Documentation</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('public.documentation') }}">Docs</a></li>
         {% if portal_info_url %}<li class="nav-item"><a class="nav-link" href="{{ portal_info_url }}" target="_blank" rel="noopener noreferrer">About</a></li>{% endif %}
         {% if portal_user %}
           {% if portal_user.role == 'admin' or portal_user.can_workflows %}<li class="nav-item"><a class="nav-link" href="{{ url_for('api.dashboard') }}">Data workflows</a></li>{% endif %}

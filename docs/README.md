@@ -1,18 +1,37 @@
-# Documentation
+# Sensor Network PWA documentation
 
-- [Configuration](configuration.md): storage location, web access, InfluxDB reads, email, and watchdog settings.
-- [Data protection](data-protection.md): GDPR deployment checklist, processing record, rights, retention, and incidents.
-- [Web GUI, API, workflows, and policies](webgui.md): accounts, access rights, dashboards, API tokens, data API, and workflow editor.
-- [Complete API reference](workflows-api.md): every `/api` endpoint, authentication, payloads, responses, and errors; also rendered by the running application at `/docs/workflows-api`.
-- [Production WSGI](wsgi.md): Gunicorn, reverse proxy, and deployment troubleshooting.
-- [Docker deployment](docker.md): web and watchdog services sharing the collector's data volume.
-- [Operations](operations.md): process roles, workflow/watchdog verification, backups, and failure diagnosis.
-- [Development and validation](development.md): local setup, tests, and change workflow.
-- [Migration](migration.md): replacing the web GUI that used to be part of `sensor-network-collector`.
-- [CI/CD](ci-cd.md): checks and GHCR images.
+The meteo@uniparthenope portal is the observational and access layer of a distributed
+environmental sensing system. It turns station measurements into discoverable,
+permission-aware and reproducible data products without coupling the web tier to the
+MQTT acquisition tier. These guides address visitors, data users, station contributors,
+operators and developers.
 
-The `sensor_network_pwa` package holds the application; `main.py` starts it for development
-and `webapp_wsgi.py` exposes it to Gunicorn. The data
-shown comes from the CSV storage written by
-[`sensor-network-collector`](https://github.com/CCMMMA/sensor-network-collector), whose
-documentation describes the file layout, units, MQTT ingest, and Signal K forwarding.
+![System overview: edge station, acquisition services, storage and PWA](images/system-overview.svg)
+
+*Figure 1. The project boundary. `sensor-network-pwa` reads collector-managed CSV and,
+optionally, InfluxDB; it never communicates with MQTT or field hardware.*
+
+## Choose a path
+
+| Goal | Start here |
+| --- | --- |
+| Explore stations and install the PWA | [Getting started](getting-started.md) |
+| Contribute a Davis Vantage Pro station | [Join the sensor network](joining-the-network.md) |
+| Download observations or write a client | [Using collected data](using-data.md) |
+| Create alerts from measurements | [Workflows and API reference](workflows-api.md) |
+| Understand pages, roles and policies | [Web GUI and policies](webgui.md) |
+| Understand components and data flow | [Architecture and data flows](architecture.md) |
+| Deploy or administer the service | [Configuration](configuration.md), [operations](operations.md), [Docker](docker.md), [WSGI](wsgi.md) |
+| Contribute code | [Development](development.md), [CI/CD](ci-cd.md) |
+
+The running application renders these exact Markdown files under `/docs`. The **Docs**
+menu provides the same navigation and searches every guide; images are served directly
+from `docs/images`. Repository review and online publication therefore share one
+canonical source rather than two copies that can diverge.
+
+## Reference set
+
+1. CCMMMA, [PyVantagePro](https://github.com/CCMMMA/PyVantagePro), communication tools for Davis Vantage Pro2 devices.
+2. CCMMMA, [vantage-publisher](https://github.com/CCMMMA/vantage-publisher), edge publisher for weather observations.
+3. CCMMMA, [sensor-network-collector](https://github.com/CCMMMA/sensor-network-collector), MQTT collection and storage service.
+4. CCMMMA, [sensor-network-pwa](https://github.com/CCMMMA/sensor-network-pwa), this portal.

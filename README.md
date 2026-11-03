@@ -1,6 +1,11 @@
 # sensor-network-pwa
 
-Web application for navigating the meteo@uniparthenope sensor network data portal.
+Research-oriented Progressive Web App for discovering, visualising and using observations
+from the meteo@uniparthenope sensor network. It combines public station dashboards,
+controlled historical access, reproducible data APIs and event-driven workflows in one
+responsive portal.
+
+![From Davis field station to the PWA](docs/images/system-overview.svg)
 
 It was split out of [`sensor-network-collector`](https://github.com/CCMMMA/sensor-network-collector).
 The collector ingests MQTT and writes hourly CSV files (and optionally InfluxDB); this
@@ -24,6 +29,10 @@ project only reads that data and serves it. It never connects to MQTT.
 - Profile page where each user sets the notification time and acknowledges, snoozes, or clears notifications
 - Web app logo and per-station logo upload
 - Optional InfluxDB v2 reads that complement the CSV files on the public dashboards
+- Built-in, responsive and searchable documentation rendered directly from the canonical
+  `docs/*.md` files and `docs/images` assets
+- Contributor pathway for deploying Davis Vantage Pro/Pro2 edge nodes with PyVantagePro,
+  vantage-publisher and sensor-network-collector
 
 ## Requirements
 
@@ -109,11 +118,15 @@ Dockerfile, docker-compose.yml.sample, nginx/   container deployment
 .github/workflows/ci-cd.yml                     quality/security checks, tests on Python 3.10-3.14, image scan/SBOM, smoke test and GHCR publish
 ```
 
-## Sharing data with the collector
+## System context
 
 ```text
-MQTT -> sensor-network-collector -> CSV files under pathStorage (+ InfluxDB)
-                                      -> sensor-network-pwa (this project)
+Davis Vantage Pro/Pro2
+  -> PyVantagePro + vantage-publisher
+    -> MQTT broker
+      -> sensor-network-collector
+        -> hourly CSV under pathStorage (+ optional InfluxDB and Signal K)
+          -> sensor-network-pwa (this project)
 ```
 
 Set `pathStorage` to the directory the collector writes to. A `config.json` used by a
@@ -123,16 +136,21 @@ still `<pathStorage>/collector_auth.sqlite`, so existing accounts and policies a
 
 ## Documentation
 
-- [Documentation index](docs/README.md)
-- [Configuration reference](docs/configuration.md)
-- [Web GUI and policies](docs/webgui.md)
-- [Complete API reference](docs/workflows-api.md) (also published by the app at `/docs/workflows-api`)
-- [Production WSGI setup](docs/wsgi.md)
-- [Docker deployment](docs/docker.md)
-- [Operations and troubleshooting](docs/operations.md)
-- [Development and validation](docs/development.md)
-- [Continuous integration and image delivery](docs/ci-cd.md)
-- [Migrating from the GUI embedded in sensor-network-collector](docs/migration.md)
+The repository and the running PWA use the same sources. Open **Docs** in the application
+to browse and search every Markdown guide; `/docs/<name>` renders `docs/<name>.md`, and
+documentation media is served from `docs/images`.
+
+- [Documentation index and reader paths](docs/README.md)
+- [Getting started](docs/getting-started.md)
+- [Join the network: hardware, power, networking and software](docs/joining-the-network.md)
+- [Using collected data, token procedure, Python and Node.js examples](docs/using-data.md)
+- [Complete API and workflow reference](docs/workflows-api.md)
+- [Architecture and data flows](docs/architecture.md)
+- [Web GUI, access policies and screenshots](docs/webgui.md)
+- [Configuration](docs/configuration.md), [operations](docs/operations.md),
+  [Docker](docs/docker.md), and [production WSGI](docs/wsgi.md)
+- [Development](docs/development.md), [CI/CD](docs/ci-cd.md),
+  [data protection](docs/data-protection.md), and [migration](docs/migration.md)
 
 ## Tests
 

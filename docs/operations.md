@@ -1,5 +1,9 @@
 # Operations
 
+Operate the PWA as one part of the layered system described in
+[Architecture and data flows](architecture.md). A healthy portal does not by itself
+prove that edge acquisition is healthy; verify each boundary independently.
+
 ## Process roles
 
 | Process | Command | Role |

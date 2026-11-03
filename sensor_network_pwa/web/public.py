@@ -1,9 +1,11 @@
-"""Public pages: home page, public station dashboard and static image assets."""
+"""Public pages: home page, documentation, station dashboards and image assets."""
 
+import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import markdown
-from flask import Blueprint, abort, jsonify, render_template, request, url_for
+from flask import Blueprint, abort, jsonify, render_template, request, send_file, url_for
 
 from sensor_network_pwa.config import parse_boolish
 from sensor_network_pwa.dashboard import build_public_station_snapshot
@@ -31,19 +33,117 @@ from sensor_network_pwa.web.util import request_preference_cookie
 
 bp = Blueprint("public", __name__)
 DOCS_ROOT = Path(__file__).resolve().parents[2] / "docs"
+DOC_PAGES = (
+    "README",
+    "getting-started",
+    "joining-the-network",
+    "using-data",
+    "workflows-api",
+    "webgui",
+    "architecture",
+    "configuration",
+    "operations",
+    "docker",
+    "wsgi",
+    "data-protection",
+    "development",
+    "ci-cd",
+    "migration",
+)
+DOC_ASSET_SUFFIXES = {".jpg", ".jpeg", ".png", ".svg", ".webp", ".gif"}
 
 
-@bp.get("/docs/workflows-api")
-def workflows_api_documentation():
-    """Render the repository's canonical workflow and API documentation."""
-    source = DOCS_ROOT / "workflows-api.md"
+def _documentation_pages():
+    pages = []
+    for slug in DOC_PAGES:
+        source = DOCS_ROOT / f"{slug}.md"
+        if not source.is_file():
+            continue
+        text = source.read_text(encoding="utf-8")
+        title_match = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
+        title = title_match.group(1).strip() if title_match else slug.replace("-", " ").title()
+        pages.append({"slug": slug, "title": title, "url": url_for("public.documentation", slug=slug)})
+    return pages
+
+
+def _rewrite_doc_links(content: str) -> str:
+    """Point relative Markdown links at the online docs routes and assets."""
+
+    def replace(match):
+        attribute, quote, target = match.groups()
+        parsed = urlsplit(target)
+        if parsed.scheme or parsed.netloc or target.startswith(("/", "#", "mailto:")):
+            return match.group(0)
+        path = parsed.path
+        if path.endswith(".md"):
+            destination = Path(path).stem
+            href = url_for("public.documentation", slug=destination)
+        elif Path(path).suffix.lower() in DOC_ASSET_SUFFIXES:
+            href = url_for("public.documentation_asset", name=path)
+        else:
+            return match.group(0)
+        if parsed.query:
+            href += f"?{parsed.query}"
+        if parsed.fragment:
+            href += f"#{parsed.fragment}"
+        return f"{attribute}={quote}{href}{quote}"
+
+    return re.sub(r"\b(href|src)=(['\"])([^'\"]+)\2", replace, content)
+
+
+@bp.get("/docs")
+@bp.get("/docs/<slug>")
+def documentation(slug: str = "README"):
+    """Render a canonical repository Markdown guide inside the PWA."""
+    if slug not in DOC_PAGES:
+        abort(404)
+    source = DOCS_ROOT / f"{slug}.md"
     if not source.is_file():
         abort(404, "Documentation is not installed")
     content = markdown.markdown(
         source.read_text(encoding="utf-8"),
-        extensions=("fenced_code", "tables", "toc"),
+        extensions=("fenced_code", "tables", "toc", "sane_lists"),
     )
-    return render_template("public/documentation.html", content=content)
+    pages = _documentation_pages()
+    current = next(page for page in pages if page["slug"] == slug)
+    return render_template(
+        "public/documentation.html",
+        content=_rewrite_doc_links(content),
+        pages=pages,
+        current=current,
+    )
+
+
+@bp.get("/docs/assets/<path:name>")
+def documentation_asset(name: str):
+    """Serve media directly from docs, the canonical documentation tree."""
+    target = (DOCS_ROOT / name).resolve()
+    is_allowed = DOCS_ROOT.resolve() in target.parents and target.suffix.lower() in DOC_ASSET_SUFFIXES
+    if not is_allowed or not target.is_file():
+        abort(404)
+    return send_file(target, conditional=True)
+
+
+@bp.get("/api/docs/search")
+def documentation_search():
+    """Search canonical Markdown without maintaining a separate index."""
+    query = str(request.args.get("q") or "").strip().lower()
+    if len(query) < 2:
+        return jsonify({"results": []})
+    terms = query.split()[:8]
+    results = []
+    for page in _documentation_pages():
+        source = (DOCS_ROOT / f"{page['slug']}.md").read_text(encoding="utf-8")
+        searchable = source.lower()
+        if not all(term in searchable for term in terms):
+            continue
+        first = min(searchable.find(term) for term in terms)
+        start = max(0, first - 90)
+        end = min(len(source), first + 210)
+        snippet = re.sub(r"[`#*|>\[\]()]", " ", source[start:end])
+        snippet = re.sub(r"\s+", " ", snippet).strip()
+        results.append({"title": page["title"], "url": page["url"], "snippet": snippet})
+    return jsonify({"results": results[:12]})
 
 
 @bp.get("/privacy")

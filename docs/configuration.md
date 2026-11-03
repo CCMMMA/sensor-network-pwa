@@ -1,5 +1,9 @@
 # Configuration Reference
 
+This reference configures the presentation and control layers shown in
+[Architecture and data flows](architecture.md). It does not configure MQTT or field
+hardware; those responsibilities belong to the publisher and collector projects.
+
 `config.json` is a JSON object. Each key can also be supplied through the environment
 variable named beside it; the file takes precedence. Keys that belong only to
 `sensor-network-collector` (`mqttBroker`, `storage`, `signalk*`, `httpEnabled`, ...)

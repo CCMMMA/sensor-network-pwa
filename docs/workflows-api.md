@@ -2,8 +2,9 @@
 
 This is the canonical reference for every HTTP endpoint below `/api`: authentication,
 data queries, downloads, public snapshots, API tokens, workflows, administration, and
-onboarding. The application publishes this same file at `/docs/workflows-api`; no
-separate online copy is maintained.
+onboarding. For a task-oriented introduction and complete Python/Node.js clients, begin
+with [Using collected data](using-data.md). The application publishes this same file at
+`/docs/workflows-api`; no separate online copy is maintained.
 
 ## Endpoint index
 
@@ -264,6 +265,11 @@ Open `/workflows` and connect the supported nodes in this order:
 ```text
 Station input -> Numeric condition -> Send email
 ```
+
+![Workflow editor showing a station, numeric condition and email action](images/workflow-editor.jpg)
+
+*Figure 1. The browser workflow editor. Its constrained node catalogue makes the graph
+auditable and prevents arbitrary browser-authored code execution.*
 
 For example, connect `station-a` to `RainRate > 300`, then connect the condition to
 an email recipient. The editor can export the graph as SVG, PNG, or JPG; raster images

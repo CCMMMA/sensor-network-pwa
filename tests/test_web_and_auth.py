@@ -647,11 +647,37 @@ class WebAndAuthTests(unittest.TestCase):
             self.assertIn(endpoint, body)
         self.assertTrue(body.lstrip().lower().startswith("<!doctype html>"))
 
-        self.assertIn("/docs/workflows-api", self.client().get("/").get_data(as_text=True))
+        self.assertIn('href="/docs"', self.client().get("/").get_data(as_text=True))
         admin_workflows = self.client("admin").get("/workflows").get_data(as_text=True)
         self.assertIn("/docs/workflows-api", admin_workflows)
         self.assertIn('href="/api-tokens"', admin_workflows)
-        self.assertIn("/docs/workflows-api", self.client("admin").get("/api-tokens").get_data(as_text=True))
+        self.assertIn("/docs/using-data", self.client("admin").get("/api-tokens").get_data(as_text=True))
+
+    def test_documentation_library_is_browsable_searchable_and_uses_docs_assets(self):
+        client = self.client()
+        index = client.get("/docs")
+        self.assertEqual(index.status_code, 200)
+        body = index.get_data(as_text=True)
+        self.assertIn("Sensor Network PWA documentation", body)
+        self.assertIn('href="/docs/using-data"', body)
+        self.assertIn('href="/docs/joining-the-network"', body)
+        self.assertIn('src="/docs/assets/images/system-overview.svg"', body)
+        self.assertIn("Search documentation", body)
+        self.assertIn("docs/README.md", body)
+
+        guide = client.get("/docs/using-data").get_data(as_text=True)
+        self.assertIn("Python example", guide)
+        self.assertIn("JavaScript / Node.js example", guide)
+        self.assertIn('href="/docs/workflows-api"', guide)
+
+        results = client.get("/api/docs/search?q=WeatherLink").get_json()["results"]
+        self.assertTrue(any(result["url"] == "/docs/joining-the-network" for result in results))
+        self.assertEqual(client.get("/api/docs/search?q=x").get_json(), {"results": []})
+        asset = client.get("/docs/assets/images/system-overview.svg")
+        self.assertEqual(asset.mimetype, "image/svg+xml")
+        asset.close()
+        self.assertEqual(client.get("/docs/assets/../README.md").status_code, 404)
+        self.assertEqual(client.get("/docs/not-a-guide").status_code, 404)
 
     def test_page_config_island_escapes_station_values(self):
         hostile = "<img src=x onerror=alert(1)>&'"

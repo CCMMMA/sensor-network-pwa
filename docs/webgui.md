@@ -1,5 +1,10 @@
 # Web GUI and Policies
 
+This guide specifies the user-facing behaviour and policy model. New readers should
+first consult [Getting started](getting-started.md); API consumers should use
+[Using collected data](using-data.md), and the system rationale appears in
+[Architecture and data flows](architecture.md).
+
 After login, the `next` return URL must be a local path beginning with a single
 `/`. External URLs, backslashes, and control characters fall back to the home page.
 
