@@ -166,13 +166,18 @@ mail-queue operations on one page; the screenshot shows the user overview.
     data API and API tokens, while the second governs the editor and workflow execution
   - account actions: change the email, assign a strong password (optionally requiring
     another change at next login), ask for or stop asking for a new password, make
-    administrator / regular user, disable / enable the account, or impersonate an
+    administrator / regular user, disable / enable, rename or delete the account,
+    stop that user's alert emails, or impersonate an
     active account. An impersonation banner remains visible on every page and returns
     the administrator to their own session; starts and ends are recorded in the auth DB
-- **Stations**: name, UUID, time of the last data, policy (saved as soon as it is
+- **Stations**: add, rename, remove or restore a portal station; view its UUID, time of the last data, policy (saved as soon as it is
   changed), how many users have rights, and links to the dashboard, the data browser
   and the chart settings. `Users` opens the same rights table seen from the station:
-  one row per regular user.
+  one row per regular user. Removing a station is non-destructive: its collector-owned
+  CSV history remains on disk.
+- **Alert email stop**: alert emails can be stopped for one user from their account
+  controls or for every user with the button above the user list. In-app notification
+  records are retained.
 - **Account requests**: pending requests with `Approve` and `Reject`. When no email
   can be sent, the onboarding link (valid 48 hours) is shown to the administrator
   after approval so that it can be passed on by other means.
@@ -187,6 +192,9 @@ Rules enforced by the server:
 - administrators have every right on every station, so they have no rights table
 
 Form endpoints (all `POST`, admin only): `/admin/create-user`, `/admin/user-update`,
+`/admin/user-rename`, `/admin/user-delete`, `/admin/user-notifications`,
+`/admin/notifications/stop-all`, `/admin/stations/save`, `/admin/stations/delete`,
+`/admin/stations/restore`,
 `/admin/user-permissions`, `/admin/station-permissions`, `/admin/policy`,
 `/admin/user-api`, `/admin/force-password`, `/admin/set-password`, `/admin/requests/<id>/approve`, `/admin/requests/<id>/reject`,
 and the single-assignment `/admin/user-access` and `/admin/user-control`.

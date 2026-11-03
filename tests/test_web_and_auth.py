@@ -1068,6 +1068,7 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertEqual(self.store.get_user("bob")["force_password_change"], 0)
 
     def test_admin_can_impersonate_user_and_return(self):
+        # Full CRUD and notification controls are covered separately below.
         admin = self.client("admin")
         response = admin.post("/admin/impersonate", data={"username": "bob"})
         self.assertEqual(response.headers["Location"], "/")
@@ -1083,6 +1084,48 @@ class WebAndAuthTests(unittest.TestCase):
         self.assertEqual([event["action"] for event in events], ["started", "ended"])
         self.assertTrue(all(event["admin_username"] == "admin" for event in events))
         self.assertTrue(all(event["target_username"] == "bob" for event in events))
+
+    def test_admin_full_user_crud_and_notification_stops(self):
+        admin = self.client("admin")
+        admin.post(
+            "/admin/create-user",
+            data={"username": "temp-user", "password": STRONG, "email": "temp@example.org"},
+        )
+        admin.post("/admin/user-rename", data={"username": "temp-user", "new_username": "renamed-user"})
+        self.assertIsNone(self.store.get_user("temp-user"))
+        self.assertIsNotNone(self.store.get_user("renamed-user"))
+        admin.post("/admin/user-notifications", data={"username": "renamed-user", "minutes": "-1"})
+        self.assertEqual(self.store.get_notification_interval("renamed-user"), -1)
+        admin.post("/admin/notifications/stop-all")
+        self.assertTrue(all(self.store.get_notification_interval(u["username"]) == -1 for u in self.store.list_users()))
+        admin.post("/admin/user-delete", data={"username": "renamed-user"})
+        self.assertIsNone(self.store.get_user("renamed-user"))
+        admin.post("/admin/user-delete", data={"username": "admin"})
+        self.assertIsNotNone(self.store.get_user("admin"))
+
+    def test_admin_station_registry_crud_does_not_delete_storage(self):
+        admin = self.client("admin")
+        admin.post(
+            "/admin/stations/save",
+            data={"station_uuid": "new-station", "display_name": "Roof station", "policy": "restricted"},
+        )
+        station = self.store.get_registered_station("new-station")
+        self.assertEqual(station["display_name"], "Roof station")
+        self.assertEqual(self.store.get_policy("new-station"), "restricted")
+        admin.post("/admin/stations/delete", data={"station_uuid": "station"})
+        self.assertFalse(self.store.station_is_enabled("station"))
+        self.assertTrue(Path(self.cfg["storage_root"], "station").is_dir())
+        self.assertNotIn("/public/station/station", self.client().get("/").get_data(as_text=True))
+        admin.post("/admin/stations/restore", data={"station_uuid": "station"})
+        self.assertTrue(self.store.station_is_enabled("station"))
+
+    def test_anomaly_log_visually_reports_silence_state(self):
+        self.store.upsert_anomaly("station", "lost_connectivity", "no data")
+        self.store.set_anomaly_silence("station", "lost_connectivity", "admin", 4)
+        body = self.client("admin").get("/anomalies").get_data(as_text=True)
+        self.assertIn("Alarm active", body)
+        self.assertIn("Silenced until", body)
+        self.assertIn("by admin", body)
 
     def test_non_admin_cannot_start_or_forge_impersonation(self):
         bob = self.client("bob")

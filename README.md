@@ -29,8 +29,10 @@ project only reads that data and serves it. It never connects to MQTT.
 - Session- or bearer-authenticated query/download API and user-managed API tokens, gated by `Can API`
 - Node-RED-style email workflows with editable connections and SVG/PNG/JPG export, independently gated by `Can workflows`
 - Accounts: admin approval of requests, forced/self-service password change, reset by email
-- Administration page with per-user and per-station rights tables, roles, and account enable/disable
-- Watchdog anomaly detection and workflow evaluation, including shared conditions across multiple stations, with persisted state and email notifications
+- Administration page with full user and portal-station CRUD, per-user and per-station rights,
+  account roles/status, and per-user or global alert-email stops. Removing a portal station never
+  deletes collector-owned CSV history.
+- Watchdog anomaly detection and workflow evaluation, including shared conditions across multiple stations, with persisted state, email notifications, and visible active/regular/silenced states
 - Profile page where each user sets the notification time and acknowledges, snoozes, or clears notifications
 - Admin-managed brand, theme colours, web app logo/icon, and per-station logo upload
 - Optional InfluxDB v2 reads that complement the CSV files on the public dashboards

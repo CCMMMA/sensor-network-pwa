@@ -93,7 +93,11 @@
     <div class="tab-pane fade show active" id="users" role="tabpanel">
       <div class="d-flex flex-wrap gap-2 mb-3">
         <input id="userSearch" class="form-control" style="max-width: 20rem;" type="search" placeholder="Search by name or email" aria-label="Search users">
-        <button class="btn btn-primary ms-auto" type="button" data-bs-toggle="collapse" data-bs-target="#newUser">New user</button>
+        <form method="post" action="{{ url_for('admin.stop_all_notifications') }}" class="ms-auto">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-outline-danger" type="submit" data-confirm="Stop alert emails for every user?">Stop all alert emails</button>
+        </form>
+        <button class="btn btn-primary" type="button" data-bs-toggle="collapse" data-bs-target="#newUser">New user</button>
       </div>
 
       <div class="collapse mb-3" id="newUser">
@@ -149,6 +153,7 @@
               {% if u.active %}<span class="badge text-bg-success">Active</span>
               {% else %}<span class="badge text-bg-danger">Disabled</span>{% endif %}
               {% if u.force_password_change %}<span class="badge text-bg-warning">Must change password</span>{% endif %}
+              {% if u.notify_interval_min == -1 %}<span class="badge text-bg-secondary">Alerts off</span>{% else %}<span class="badge text-bg-info">Alerts on</span>{% endif %}
             </td>
             <td class="small">
               {% if u.role == 'admin' %}All stations
@@ -207,6 +212,14 @@
                   </div>
                   <div class="col-lg-5">
                     <h3 class="h6">Account</h3>
+                    <form method="post" action="{{ url_for('admin.user_notifications') }}" class="card card-body p-2 mb-2">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="username" value="{{ u.username }}">
+                      <div class="d-flex justify-content-between align-items-center gap-2">
+                        <div><b>Alert emails</b><div class="form-text">{{ 'Stopped' if u.notify_interval_min == -1 else 'Enabled' }}</div></div>
+                        <input type="hidden" name="minutes" value="{{ 60 if u.notify_interval_min == -1 else -1 }}">
+                        <button class="btn btn-sm {{ 'btn-outline-success' if u.notify_interval_min == -1 else 'btn-outline-danger' }}" type="submit">{{ 'Enable' if u.notify_interval_min == -1 else 'Stop' }}</button>
+                      </div>
+                    </form>
                     {% if u.username != admin_user.username and u.active %}
                     <form method="post" action="{{ url_for('admin.impersonate_user') }}" class="card card-body p-2 mb-2">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -245,6 +258,17 @@
                       <input class="form-control" type="email" name="email" value="{{ u.email or '' }}" aria-label="Email of {{ u.username }}">
                       <button class="btn btn-outline-primary" type="submit">Save</button>
                     </form>
+                    {% if u.username != admin_user.username %}
+                    <form method="post" action="{{ url_for('admin.rename_user') }}" class="input-group input-group-sm mb-2">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="username" value="{{ u.username }}">
+                      <span class="input-group-text">Username</span><input class="form-control" name="new_username" value="{{ u.username }}" required>
+                      <button class="btn btn-outline-primary" type="submit">Rename</button>
+                    </form>
+                    <form method="post" action="{{ url_for('admin.delete_user') }}" class="mb-2">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="username" value="{{ u.username }}">
+                      <button class="btn btn-danger btn-sm" type="submit" data-confirm="Permanently delete user {{ u.username }} and their settings?">Delete user</button>
+                    </form>
+                    {% endif %}
                     <form method="post" action="{{ url_for('admin.set_password') }}" class="card card-body p-2 mb-2">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <input type="hidden" name="username" value="{{ u.username }}">
@@ -322,6 +346,15 @@
         <span class="badge text-bg-primary">Account</span> dashboard visible, data rights assigned per user ·
         <span class="badge text-bg-dark">Restricted</span> hidden except from assigned users. Browse and CSV download rights are always selected separately below.
       </div>
+      <form method="post" action="{{ url_for('admin.save_station') }}" class="card card-body mb-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <h2 class="h6">Add station</h2><div class="row g-2 align-items-end">
+          <div class="col-md-4"><label class="form-label">UUID</label><input class="form-control" name="station_uuid" required></div>
+          <div class="col-md-4"><label class="form-label">Display name</label><input class="form-control" name="display_name"></div>
+          <div class="col-md-2"><label class="form-label">Policy</label><select class="form-select" name="policy"><option value="account">Account</option><option value="open">Open</option><option value="restricted">Restricted</option></select></div>
+          <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Add station</button></div>
+        </div><div class="form-text">This registers the station in the portal. CSV history remains owned by the collector.</div>
+      </form>
       {% if not stations %}
         <p class="text-muted mb-0">No stations found in storage.</p>
       {% else %}
@@ -334,6 +367,7 @@
             <td>
               <div class="fw-semibold">{{ st.name }}</div>
               {% if st.name != st.uuid %}<div class="uuid text-muted">{{ st.uuid }}</div>{% endif %}
+              {% if not st.enabled %}<span class="badge text-bg-secondary">Removed</span>{% elif not st.has_data %}<span class="badge text-bg-warning">Waiting for data</span>{% endif %}
             </td>
             <td class="small">{{ st.last_timestamp|datetime_display if st.last_timestamp else '-' }}</td>
             <td>
@@ -353,10 +387,20 @@
               · {{ st.control_count }} chart editor{{ '' if st.control_count == 1 else 's' }}
             </td>
             <td class="text-end text-nowrap">
+              <form method="post" action="{{ url_for('admin.save_station') }}" class="d-inline-flex gap-1 mb-1">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="station_uuid" value="{{ st.uuid }}"><input type="hidden" name="policy" value="{{ st.policy }}">
+                <input class="form-control form-control-sm" name="display_name" value="{{ st.name }}" aria-label="Display name of {{ st.uuid }}"><button class="btn btn-outline-primary btn-sm" type="submit">Rename</button>
+              </form>
+              <form method="post" action="{{ url_for('admin.restore_station' if not st.enabled else 'admin.delete_station') }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="station_uuid" value="{{ st.uuid }}">
+                <button class="btn {{ 'btn-outline-success' if not st.enabled else 'btn-outline-danger' }} btn-sm" type="submit" {% if st.enabled %}data-confirm="Remove {{ st.name }} from the portal? Historical CSV files will not be deleted."{% endif %}>{{ 'Restore' if not st.enabled else 'Remove' }}</button>
+              </form>
+              {% if st.has_data and st.enabled %}
               <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('public.station', instrument_uuid=st.uuid) }}">Dashboard</a>
               <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('stations.browse_station', instrument_uuid=st.uuid) }}">Data</a>
               <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('stations.station_chart_settings', instrument_uuid=st.uuid) }}">Chart settings</a>
               <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#station-{{ loop.index }}">Users</button>
+              {% endif %}
             </td>
           </tr>
           <tr class="manage-row">

@@ -77,6 +77,11 @@ class NotificationsMixin(PermissionsMixin):
                 return False, "User not found"
         return True, "Notification time saved"
 
+    def stop_all_email_notifications(self):
+        with self._lock, self._connect() as con:
+            cur = con.execute("UPDATE users SET notify_interval_min = -1")
+        return cur.rowcount
+
     def sync_notifications(self, anomaly_id: int, usernames, now: datetime):
         """Give each user a notification for the anomaly; returns them by username."""
         with self._lock, self._connect() as con:

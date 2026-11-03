@@ -13,11 +13,14 @@
       <tr>
         <td>{{ a.station_uuid }}</td>
         <td>{{ a.anomaly_type }}</td>
-        <td>{{ a.status }}</td>
+        <td>
+          {% if a.status == 'open' %}<span class="badge text-bg-danger">Alarm active</span>{% else %}<span class="badge text-bg-success">Regular</span>{% endif %}
+          {% if a.silenced_until %}<span class="badge text-bg-warning">Silenced until {{ a.silenced_until|datetime_display }}</span><div class="small text-muted">by {{ a.silenced_by }}</div>{% endif %}
+        </td>
         <td>{{ a.message }}</td>
         <td>{{ a.updated_at|datetime_display }}</td>
         <td>
-          {% if a.status == 'open' %}
+          {% if a.status == 'open' and not a.silenced_until %}
           <form method="post" action="{{ url_for('admin.silence_anomaly') }}" class="d-flex gap-1">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="station_uuid" value="{{ a.station_uuid }}">

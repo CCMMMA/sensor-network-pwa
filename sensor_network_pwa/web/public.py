@@ -224,7 +224,7 @@ def index():
         stations.append(
             {
                 "uuid": inst,
-                "name": preview["name"],
+                "name": get_store().station_display_name(inst, preview["name"]),
                 "policy": policies.get(inst, "account"),
                 "can_access": can_browse,
                 "can_download": can_download,
@@ -287,6 +287,9 @@ def station(instrument_uuid: str):
         cfg=get_cfg(),
         access_store=get_store(),
     )
+    snapshot["station_name"] = get_store().station_display_name(
+        instrument_uuid, snapshot.get("station_name") or instrument_uuid
+    )
     station_logo_row = get_store().get_station_logo(instrument_uuid)
     station_logo_url = None
     if station_logo_row:
@@ -328,6 +331,9 @@ def station_snapshot(instrument_uuid: str):
         window=window,
         cfg=get_cfg(),
         access_store=get_store(),
+    )
+    snapshot["station_name"] = get_store().station_display_name(
+        instrument_uuid, snapshot.get("station_name") or instrument_uuid
     )
     changed = bool(snapshot.get("last_timestamp")) and snapshot.get("last_timestamp") != since
     if force:

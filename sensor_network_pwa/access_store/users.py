@@ -92,7 +92,8 @@ class UsersMixin(StoreBase):
     def get_user(self, username: str):
         with self._connect() as con:
             row = con.execute(
-                "SELECT username,email,role,active,created_at,force_password_change,can_api,can_workflows "
+                "SELECT username,email,role,active,created_at,force_password_change,can_api,can_workflows,"
+                "notify_interval_min "
                 "FROM users WHERE username = ?",
                 (username,),
             ).fetchone()
@@ -101,7 +102,8 @@ class UsersMixin(StoreBase):
     def list_users(self):
         with self._connect() as con:
             rows = con.execute(
-                "SELECT username,email,role,active,created_at,force_password_change,can_api,can_workflows "
+                "SELECT username,email,role,active,created_at,force_password_change,can_api,can_workflows,"
+                "notify_interval_min "
                 "FROM users ORDER BY username"
             ).fetchall()
             return [dict(r) for r in rows]
@@ -226,6 +228,54 @@ class UsersMixin(StoreBase):
                 con.execute("UPDATE users SET email = ? WHERE username = ?", (email, username))
             con.execute("UPDATE users SET role = ?, active = ? WHERE username = ?", (new_role, new_active, username))
         return True, f"User {username} updated"
+
+    def rename_user(self, username: str, new_username: str):
+        username, new_username = username.strip(), new_username.strip()
+        if not new_username:
+            return False, "Username is required"
+        with self._lock, self._connect() as con:
+            if not con.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+                return False, "User not found"
+            if con.execute("SELECT 1 FROM users WHERE username=?", (new_username,)).fetchone():
+                return False, "User already exists"
+            con.execute("UPDATE users SET username=? WHERE username=?", (new_username, username))
+            for table, column in (
+                ("user_instruments", "username"),
+                ("user_station_controls", "username"),
+                ("login_tokens", "username"),
+                ("password_reset_tokens", "username"),
+                ("api_tokens", "username"),
+                ("notifications", "username"),
+                ("workflows", "username"),
+                ("access_events", "username"),
+            ):
+                con.execute(f"UPDATE {table} SET {column}=? WHERE {column}=?", (new_username, username))
+        return True, f"User {username} renamed to {new_username}"
+
+    def delete_user(self, username: str):
+        username = username.strip()
+        with self._lock, self._connect() as con:
+            row = con.execute("SELECT role,active FROM users WHERE username=?", (username,)).fetchone()
+            if row is None:
+                return False, "User not found"
+            if row["role"] == "admin" and int(row["active"]) == 1:
+                others = con.execute(
+                    "SELECT COUNT(*) AS n FROM users WHERE role='admin' AND active=1 AND username<>?", (username,)
+                ).fetchone()["n"]
+                if not others:
+                    return False, "At least one active administrator is required"
+            for table, column in (
+                ("user_instruments", "username"),
+                ("user_station_controls", "username"),
+                ("login_tokens", "username"),
+                ("password_reset_tokens", "username"),
+                ("api_tokens", "username"),
+                ("notifications", "username"),
+                ("workflows", "username"),
+            ):
+                con.execute(f"DELETE FROM {table} WHERE {column}=?", (username,))
+            con.execute("DELETE FROM users WHERE username=?", (username,))
+        return True, f"User {username} deleted"
 
     def set_force_password_change(self, username: str, force: bool):
         with self._lock, self._connect() as con:

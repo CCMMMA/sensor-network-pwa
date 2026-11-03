@@ -114,7 +114,7 @@ def storage_root_or_404() -> str:
 
 
 def available_instruments(storage_root: str):
-    return collect_instruments(storage_root)
+    return [station for station in collect_instruments(storage_root) if get_store().station_is_enabled(station)]
 
 
 def station_is_accessible(user, instrument_uuid: str):

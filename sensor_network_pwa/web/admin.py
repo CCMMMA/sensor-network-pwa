@@ -37,7 +37,9 @@ def index():
     admin_user = g.user
 
     storage_root: str = get_cfg().get("storage_root") or ""
-    instruments = collect_instruments(storage_root) if storage_root else []
+    discovered = collect_instruments(storage_root) if storage_root else []
+    registered = {row["station_uuid"]: row for row in get_store().list_registered_stations()}
+    instruments = sorted(set(discovered) | set(registered))
     policies = get_store().list_policies(instruments)
     users = get_store().list_users()
     pending_requests = get_store().list_account_requests(status="pending")
@@ -54,12 +56,17 @@ def index():
 
     stations = []
     for inst in instruments:
-        preview = get_station_preview(storage_root, inst)
+        preview = (
+            get_station_preview(storage_root, inst) if inst in discovered else {"name": inst, "last_timestamp": None}
+        )
+        registry = registered.get(inst, {})
         stations.append(
             {
                 "uuid": inst,
-                "name": preview["name"],
+                "name": registry.get("display_name") or preview["name"],
                 "last_timestamp": preview["last_timestamp"],
+                "enabled": bool(registry.get("enabled", 1)),
+                "has_data": inst in discovered,
                 "policy": policies.get(inst, "account"),
                 "browse_count": sum(1 for u in regular_users if inst in u["browse"]),
                 "download_count": sum(1 for u in regular_users if inst in u["download"]),
@@ -486,6 +493,73 @@ def update_user():
         return admin_done("users", False, "You cannot disable or demote your own account")
     ok, msg = get_store().update_user(username, **changes)
     return admin_done("users", ok, msg)
+
+
+@bp.post("/admin/user-rename")
+@admin_required
+def rename_user():
+    username = request.form.get("username", "").strip()
+    if username == g.user["username"]:
+        return admin_done("users", False, "You cannot rename your current account")
+    ok, msg = get_store().rename_user(username, request.form.get("new_username", ""))
+    return admin_done("users", ok, msg)
+
+
+@bp.post("/admin/user-delete")
+@admin_required
+def delete_user():
+    username = request.form.get("username", "").strip()
+    if username == g.user["username"]:
+        return admin_done("users", False, "You cannot delete your current account")
+    ok, msg = get_store().delete_user(username)
+    return admin_done("users", ok, msg)
+
+
+@bp.post("/admin/user-notifications")
+@admin_required
+def user_notifications():
+    username = request.form.get("username", "").strip()
+    try:
+        minutes = int(request.form.get("minutes", "-1"))
+    except ValueError:
+        minutes = -1
+    ok, msg = get_store().set_notification_interval(username, minutes)
+    return admin_done("users", ok, msg)
+
+
+@bp.post("/admin/notifications/stop-all")
+@admin_required
+def stop_all_notifications():
+    count = get_store().stop_all_email_notifications()
+    return admin_done("users", True, f"Alert emails stopped for {count} users")
+
+
+@bp.post("/admin/stations/save")
+@admin_required
+def save_station():
+    station_uuid = request.form.get("station_uuid", "")
+    ok, msg = get_store().save_registered_station(
+        station_uuid, request.form.get("display_name", ""), g.user["username"]
+    )
+    if ok:
+        ok, msg = get_store().set_policy(station_uuid, request.form.get("policy", "account"), g.user["username"])
+    return admin_done("stations", ok, msg)
+
+
+@bp.post("/admin/stations/delete")
+@admin_required
+def delete_station():
+    ok, msg = get_store().set_registered_station_enabled(
+        request.form.get("station_uuid", ""), False, g.user["username"]
+    )
+    return admin_done("stations", ok, msg)
+
+
+@bp.post("/admin/stations/restore")
+@admin_required
+def restore_station():
+    ok, msg = get_store().set_registered_station_enabled(request.form.get("station_uuid", ""), True, g.user["username"])
+    return admin_done("stations", ok, msg)
 
 
 @bp.route("/admin/force-password", methods=["POST"])

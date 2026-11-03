@@ -151,6 +151,8 @@ def run_watchdog_scan(cfg: dict, access_store: AccessStore, storage_root: str, n
     recovery_hold = anomaly_recovery_hold_seconds(cfg)
     failing = []
     for instrument_uuid in collect_instruments(storage_root):
+        if not access_store.station_is_enabled(instrument_uuid):
+            continue
         try:
             rows = load_station_rows(storage_root, instrument_uuid, limit=500)
             summary = evaluate_station_anomalies(instrument_uuid, rows, now)

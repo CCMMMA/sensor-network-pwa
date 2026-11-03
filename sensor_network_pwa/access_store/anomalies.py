@@ -84,7 +84,8 @@ class AnomaliesMixin(StoreBase):
                     LIMIT 1000
                     """
                 ).fetchall()
-                return [dict(r) for r in rows]
+                items = [dict(r) for r in rows]
+                return self._add_silence_state(items)
             rows = con.execute(
                 """
                 SELECT a.id,a.station_uuid,a.anomaly_type,a.message,a.severity,a.status,
@@ -97,7 +98,27 @@ class AnomaliesMixin(StoreBase):
                 """,
                 (user["username"],),
             ).fetchall()
-            return [dict(r) for r in rows]
+            return self._add_silence_state([dict(r) for r in rows])
+
+    def _add_silence_state(self, items):
+        now = utc_now()
+        with self._connect() as con:
+            silences = {
+                (row["station_uuid"], row["anomaly_type"]): dict(row)
+                for row in con.execute(
+                    "SELECT station_uuid,anomaly_type,silenced_until,silenced_by FROM anomaly_silence"
+                )
+            }
+        for item in items:
+            silence = silences.get((item["station_uuid"], item["anomaly_type"]))
+            item["silenced_until"] = None
+            item["silenced_by"] = None
+            if silence:
+                until = parse_iso_ts(silence["silenced_until"])
+                if until and until > now:
+                    item["silenced_until"] = silence["silenced_until"]
+                    item["silenced_by"] = silence["silenced_by"]
+        return items
 
     def set_anomaly_silence(self, station_uuid: str, anomaly_type: str, silenced_by: str, hours: int):
         now = utc_now()

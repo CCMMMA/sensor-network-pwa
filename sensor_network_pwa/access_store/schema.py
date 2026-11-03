@@ -135,6 +135,15 @@ CREATE TABLE IF NOT EXISTS station_chart_settings (
     PRIMARY KEY (station_uuid, series_key)
 );
 
+CREATE TABLE IF NOT EXISTS station_registry (
+    station_uuid TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
