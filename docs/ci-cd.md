@@ -1,5 +1,11 @@
 # Continuous integration and delivery
 
+Direct cross-version dependencies and the fully resolved Python 3.11 production image
+lock in `requirements-container.txt` are exactly pinned. Dependabot opens weekly
+updates against `development` for pip, Docker, and GitHub Actions; pull requests pass
+dependency review, `pip-audit`, container vulnerability scanning, and SBOM generation
+before images are published.
+
 `.github/workflows/ci-cd.yml` runs on pull requests to and pushes to `main` and
 `development`, and on manual dispatch.
 

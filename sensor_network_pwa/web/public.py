@@ -1,5 +1,6 @@
 """Public pages: home page, documentation, station dashboards and image assets."""
 
+import os
 import re
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -10,6 +11,7 @@ from flask import Blueprint, abort, jsonify, render_template, request, send_file
 from sensor_network_pwa.config import parse_boolish
 from sensor_network_pwa.dashboard import build_public_station_snapshot
 from sensor_network_pwa.intervals import PUBLIC_TREND_WINDOWS, normalize_public_window
+from sensor_network_pwa.runtime import runtime
 from sensor_network_pwa.storage import get_station_preview
 from sensor_network_pwa.timeutil import parse_iso_ts
 from sensor_network_pwa.validation import safe_filename
@@ -51,6 +53,40 @@ DOC_PAGES = (
     "migration",
 )
 DOC_ASSET_SUFFIXES = {".jpg", ".jpeg", ".png", ".svg", ".webp", ".gif"}
+
+
+@bp.get("/health")
+def health():
+    """Readiness check for the database, CSV storage and optional InfluxDB."""
+    checks = {}
+    try:
+        checks["database"] = "ok" if get_store().healthcheck() else "error"
+    except Exception:
+        checks["database"] = "error"
+
+    storage_root = get_cfg().get("storage_root")
+    checks["storage"] = (
+        "disabled"
+        if not storage_root
+        else "ok"
+        if Path(storage_root).is_dir() and os.access(storage_root, os.R_OK | os.X_OK)
+        else "error"
+    )
+
+    if not get_cfg().get("enable_influx"):
+        checks["influxdb"] = "disabled"
+    else:
+        client = runtime.get("influx_client")
+        try:
+            checks["influxdb"] = "ok" if client is not None and client.ping() else "error"
+        except Exception:
+            checks["influxdb"] = "error"
+
+    healthy = all(status in ("ok", "disabled") for status in checks.values())
+    response = jsonify(status="ok" if healthy else "error", checks=checks)
+    response.status_code = 200 if healthy else 503
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _documentation_pages():

@@ -1,5 +1,7 @@
 """Sign-in, password and account-request routes."""
 
+import hashlib
+
 from flask import Blueprint, abort, g, jsonify, redirect, render_template, request, session, url_for
 
 from sensor_network_pwa.mailer import compose_external_url, queue_email
@@ -9,11 +11,32 @@ from sensor_network_pwa.web.access import current_user, get_cfg, get_store, logi
 bp = Blueprint("auth", __name__)
 
 
+def _rate_limit(kind: str, identity: str, limit_key: str, window_key: str):
+    cfg = get_cfg()
+    remote = request.remote_addr or "unknown"
+    material = f"{kind}\0{remote}\0{identity.casefold()}".encode()
+    key_hash = hashlib.sha256(material).hexdigest()
+    exceeded, retry_after = get_store().rate_limit_exceeded(
+        key_hash,
+        max(1, int(cfg[limit_key])),
+        max(1, int(cfg[window_key])),
+    )
+    if exceeded:
+        response = jsonify(error="Too many attempts; try again later")
+        response.status_code = 429
+        response.headers["Retry-After"] = str(retry_after)
+        return response
+    return None
+
+
 @bp.route("/login", methods=["GET", "POST"])
 def login():
     err = str(request.args.get("err", "") or "").strip()
     if request.method == "POST":
         username = request.form.get("username", "").strip()
+        limited = _rate_limit("login", username, "login_rate_limit", "login_rate_window_sec")
+        if limited is not None:
+            return limited
         password = request.form.get("password", "")
         user = get_store().authenticate(username, password)
         if user:
@@ -60,7 +83,7 @@ def fast_login():
     return redirect(target)
 
 
-@bp.route("/logout")
+@bp.post("/logout")
 def logout():
     user = current_user()
     if user:
@@ -99,6 +122,9 @@ def forgot_password():
     err = ""
     if request.method == "POST":
         identity = request.form.get("identity", "").strip()
+        limited = _rate_limit("password-reset", identity, "reset_rate_limit", "reset_rate_window_sec")
+        if limited is not None:
+            return limited
         user = get_store().find_active_user_by_identity(identity)
         if user and user.get("email"):
             token = get_store().create_password_reset_token(user["username"], ttl_minutes=30)

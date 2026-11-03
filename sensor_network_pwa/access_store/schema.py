@@ -165,6 +165,13 @@ CREATE TABLE IF NOT EXISTS write_probe (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS rate_limits (
+    key_hash TEXT PRIMARY KEY,
+    window_started_at TEXT NOT NULL,
+    attempts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window_started_at);
+
 CREATE TABLE IF NOT EXISTS impersonation_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     admin_username TEXT NOT NULL,

@@ -3,6 +3,7 @@
 !Dockerfile
 !.dockerignore
 !requirements.txt
+!requirements-container.txt
 !main.py
 !webapp_wsgi.py
 !sensor_network_pwa

@@ -124,7 +124,8 @@
     }));
   }
   async function request(url, options = {}) {
-    const response = await fetch(url, {...options, headers:{"Content-Type":"application/json",...(options.headers || {})}});
+    const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+    const response = await fetch(url, {...options, headers:{"Content-Type":"application/json","X-CSRF-Token":csrfToken,...(options.headers || {})}});
     const text = response.status === 204 ? "" : await response.text();
     let data = null; if (text) { try { data = JSON.parse(text); } catch (_) { data = null; } }
     if (!response.ok) throw new Error(data?.error || text || `Request failed (${response.status})`);

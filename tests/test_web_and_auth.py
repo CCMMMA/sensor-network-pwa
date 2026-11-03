@@ -13,12 +13,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from flask.testing import FlaskClient
+
 from sensor_network_pwa.access_store import AccessStore
 from sensor_network_pwa.config import load_config
 from sensor_network_pwa.dashboard import build_public_station_snapshot
 from sensor_network_pwa.influx import init_influx_runtime
 from sensor_network_pwa.log import logger
 from sensor_network_pwa.mailer import drain_email_queue, queue_email
+from sensor_network_pwa.maintenance import backup_database, restore_drill, verify_database
 from sensor_network_pwa.runtime import runtime
 from sensor_network_pwa.storage import iter_csv_files_newest_first, iter_csv_rows, load_station_rows, to_float
 from sensor_network_pwa.watchdog import run_watchdog_scan
@@ -27,6 +30,26 @@ from sensor_network_pwa.workflows import run_workflows
 
 STRONG = "Str0ng!Passw0rd"
 XSS_FIELD = "</script><script>alert(1)</script>"
+
+
+class CsrfClient(FlaskClient):
+    """Browser-like test client that submits the token obtained with the session."""
+
+    def open(self, *args, **kwargs):
+        method = str(kwargs.get("method") or "GET").upper()
+        if method not in ("GET", "HEAD", "OPTIONS"):
+            headers = dict(kwargs.get("headers") or {})
+            if "Authorization" not in headers and "X-CSRF-Token" not in headers:
+                with self.session_transaction() as test_session:
+                    token = test_session.setdefault("csrf_token", "test-csrf-token")
+                if kwargs.get("json") is not None:
+                    headers["X-CSRF-Token"] = token
+                elif isinstance(kwargs.get("data"), dict):
+                    kwargs["data"] = {**kwargs["data"], "csrf_token": token}
+                else:
+                    headers["X-CSRF-Token"] = token
+                kwargs["headers"] = headers
+        return super().open(*args, **kwargs)
 
 
 class WebAndAuthTests(unittest.TestCase):
@@ -63,6 +86,7 @@ class WebAndAuthTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.app = create_web_app(self.cfg, self.store)
+        self.app.test_client_class = CsrfClient
 
     def write_row(self, instrument_uuid, dt, row):
         # Same layout as the hourly CSV files written by sensor-network-collector.
@@ -118,14 +142,78 @@ class WebAndAuthTests(unittest.TestCase):
                 self.assertEqual(client.post("/admin/policy", data=form, headers=headers).status_code, 302)
         self.assertEqual(self.store.get_policy("station"), "open")
 
+    def test_csrf_token_is_required_for_forms_and_session_json(self):
+        client = self.client("admin")
+        rejected = client.post(
+            "/admin/policy",
+            data={"instrument_uuid": "station", "policy": "open"},
+            headers={"X-CSRF-Token": "wrong"},
+        )
+        self.assertEqual(rejected.status_code, 403)
+        self.assertEqual(self.store.get_policy("station"), "account")
+        page = client.get("/admin").get_data(as_text=True)
+        self.assertIn('name="csrf_token"', page)
+        self.assertIn('meta name="csrf-token"', page)
+
+    def test_login_and_password_reset_are_rate_limited_across_clients(self):
+        self.cfg["login_rate_limit"] = 2
+        self.cfg["login_rate_window_sec"] = 60
+        for _ in range(2):
+            self.assertEqual(
+                self.app.test_client().post("/login", data={"username": "bob", "password": "wrong"}).status_code,
+                200,
+            )
+        limited = self.app.test_client().post("/login", data={"username": "bob", "password": "wrong"})
+        self.assertEqual(limited.status_code, 429)
+        self.assertGreater(int(limited.headers["Retry-After"]), 0)
+
+    def test_health_endpoint_reports_dependencies(self):
+        response = self.app.test_client().get("/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertEqual(response.json["checks"], {"database": "ok", "storage": "ok", "influxdb": "disabled"})
+
+        unavailable = create_web_app(dict(self.cfg, storage_root=str(Path(self.temp.name) / "missing")), self.store)
+        response = unavailable.test_client().get("/health")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json["checks"]["storage"], "error")
+
+    def test_auth_database_backup_and_restore_drill(self):
+        backup = Path(self.temp.name) / "backups" / "auth.sqlite"
+        backup_database(Path(self.cfg["auth_db_path"]), backup)
+        verify_database(backup)
+        with sqlite3.connect(backup) as con:
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM users").fetchone()[0], 2)
+        restore_drill(Path(self.cfg["auth_db_path"]))
+
     def test_session_cookie_and_security_headers(self):
         response = self.app.test_client().post("/login", data={"username": "bob", "password": STRONG})
         self.assertIn("SameSite=Lax", response.headers["Set-Cookie"])
         self.assertIn("HttpOnly", response.headers["Set-Cookie"])
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+        self.assertEqual(response.headers["Strict-Transport-Security"], "max-age=31536000")
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        policy = response.headers["Content-Security-Policy"]
+        self.assertIn("default-src 'self'", policy)
+        self.assertIn("script-src 'self' https://cdn.jsdelivr.net https://unpkg.com", policy)
+        self.assertIn("object-src 'none'", policy)
+        self.assertIn("frame-ancestors 'none'", policy)
+
+        client = self.client("bob")
+        self.assertEqual(client.get("/station/station").headers["Cache-Control"], "no-store")
+        # Long-lived credentials must also keep responses private without a session.
+        token = self.client("admin").post("/api/tokens", json={"name": "Header test"}).json["token"]
+        bearer = self.app.test_client().get("/api/query", headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(bearer.headers["Cache-Control"], "no-store")
+        # Assets keep their own cache semantics even when requested by a signed-in client.
+        asset = client.get("/static/js/pwa.js")
+        self.assertNotEqual(asset.headers.get("Cache-Control"), "no-store")
+        asset.close()
 
     def test_https_base_url_marks_session_cookie_secure(self):
         app = create_web_app(dict(self.cfg, base_url="https://portal.example.org"), self.store)
+        app.test_client_class = CsrfClient
         response = app.test_client().post("/login", data={"username": "bob", "password": STRONG})
         self.assertIn("Secure", response.headers["Set-Cookie"])
 
@@ -1250,7 +1338,7 @@ class WebAndAuthTests(unittest.TestCase):
         export = user.get("/station/station/export.csv?interval=hour")
         self.assertEqual(export.status_code, 200)
         export.close()
-        self.assertEqual(user.get("/logout").status_code, 302)
+        self.assertEqual(user.post("/logout").status_code, 302)
 
         events = self.store.list_access_events(username="bob", limit=20)
         event_types = {item["event_type"] for item in events}

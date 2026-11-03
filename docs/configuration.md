@@ -1,5 +1,14 @@
 # Configuration Reference
 
+## Authentication rate limits
+
+`loginRateLimit` (default 10) and `loginRateWindowSec` (default 300) limit login
+attempts per source address and normalized username. `resetRateLimit` (default 5) and
+`resetRateWindowSec` (default 3600) similarly protect password-reset requests. Counts
+are stored in `authDbPath`, so all web workers share them. Environment equivalents are
+`LOGIN_RATE_LIMIT`, `LOGIN_RATE_WINDOW_SEC`, `RESET_RATE_LIMIT`, and
+`RESET_RATE_WINDOW_SEC`.
+
 This reference configures the presentation and control layers shown in
 [Architecture and data flows](architecture.md). It does not configure MQTT or field
 hardware; those responsibilities belong to the publisher and collector projects.

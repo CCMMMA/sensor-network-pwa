@@ -95,6 +95,7 @@
 
       <div class="collapse mb-3" id="newUser">
         <form method="post" action="{{ url_for('admin.create_user') }}" class="card card-body">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <h2 class="h6">New user</h2>
           <div class="row g-3">
             <div class="col-md-6 col-lg-3">
@@ -170,6 +171,7 @@
                       <p class="text-muted mb-0">No stations found in storage.</p>
                     {% else %}
                       <form method="post" action="{{ url_for('admin.set_user_permissions') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="username" value="{{ u.username }}">
                         <table class="table table-sm rights-table bg-white border">
                           <thead><tr>
@@ -204,6 +206,7 @@
                     <h3 class="h6">Account</h3>
                     {% if u.username != admin_user.username and u.active %}
                     <form method="post" action="{{ url_for('admin.impersonate_user') }}" class="card card-body p-2 mb-2">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <input type="hidden" name="username" value="{{ u.username }}">
                       <div class="d-flex justify-content-between align-items-center gap-2">
                         <div><b>Impersonate user</b><div class="form-text">View and use the portal with this account's permissions.</div></div>
@@ -213,6 +216,7 @@
                     {% endif %}
                     {% if u.role != 'admin' %}
                     <form method="post" action="{{ url_for('admin.set_user_api') }}" class="card card-body p-2 mb-2">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <input type="hidden" name="username" value="{{ u.username }}">
                       <input type="hidden" name="allow" value="{{ 0 if u.can_api else 1 }}">
                       <div class="d-flex justify-content-between align-items-center gap-2">
@@ -221,6 +225,7 @@
                       </div>
                     </form>
                     <form method="post" action="{{ url_for('admin.set_user_workflows') }}" class="card card-body p-2 mb-2">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <input type="hidden" name="username" value="{{ u.username }}">
                       <input type="hidden" name="allow" value="{{ 0 if u.can_workflows else 1 }}">
                       <div class="d-flex justify-content-between align-items-center gap-2">
@@ -230,6 +235,7 @@
                     </form>
                     {% endif %}
                     <form method="post" action="{{ url_for('admin.update_user') }}" class="input-group input-group-sm mb-2">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <input type="hidden" name="username" value="{{ u.username }}">
                       <input type="hidden" name="action" value="email">
                       <span class="input-group-text">Email</span>
@@ -237,6 +243,7 @@
                       <button class="btn btn-outline-primary" type="submit">Save</button>
                     </form>
                     <form method="post" action="{{ url_for('admin.set_password') }}" class="card card-body p-2 mb-2">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <input type="hidden" name="username" value="{{ u.username }}">
                       <div class="row g-2">
                         <div class="col-sm-6">
@@ -257,6 +264,7 @@
                     </form>
                     <div class="d-flex flex-wrap gap-2">
                       <form method="post" action="{{ url_for('admin.force_password') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="username" value="{{ u.username }}">
                         {% if u.force_password_change %}
                           <input type="hidden" name="force" value="0">
@@ -267,6 +275,7 @@
                       </form>
                       {% if u.username != admin_user.username %}
                         <form method="post" action="{{ url_for('admin.update_user') }}">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                           <input type="hidden" name="username" value="{{ u.username }}">
                           {% if u.role == 'admin' %}
                             <input type="hidden" name="action" value="make_user">
@@ -277,6 +286,7 @@
                           {% endif %}
                         </form>
                         <form method="post" action="{{ url_for('admin.update_user') }}">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                           <input type="hidden" name="username" value="{{ u.username }}">
                           {% if u.active %}
                             <input type="hidden" name="action" value="deactivate">
@@ -325,6 +335,7 @@
             <td class="small">{{ st.last_timestamp or '-' }}</td>
             <td>
               <form method="post" action="{{ url_for('admin.set_policy') }}" class="d-flex gap-1">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="instrument_uuid" value="{{ st.uuid }}">
                 <select class="form-select form-select-sm policy-select" name="policy" style="min-width: 8.5rem;" aria-label="Policy of {{ st.name }}">
                   <option value="open" {% if st.policy=='open' %}selected{% endif %}>Open</option>
@@ -354,6 +365,7 @@
                     <p class="text-muted mb-0">There are no regular users yet. Administrators already have every right.</p>
                   {% else %}
                     <form method="post" action="{{ url_for('admin.set_station_permissions') }}" style="max-width: 44rem;">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <input type="hidden" name="station_uuid" value="{{ st.uuid }}">
                       <table class="table table-sm rights-table bg-white border">
                         <thead><tr>
@@ -410,9 +422,11 @@
             </div>
             <div class="d-flex gap-2">
               <form method="post" action="{{ url_for('admin.approve_request', request_id=r.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button class="btn btn-success btn-sm" type="submit">Approve</button>
               </form>
               <form method="post" action="{{ url_for('admin.reject_request', request_id=r.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button class="btn btn-outline-danger btn-sm" type="submit" data-confirm="Reject the request from {{ r.email }}?">Reject</button>
               </form>
             </div>

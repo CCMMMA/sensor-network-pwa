@@ -25,7 +25,7 @@ Set (see [configuration](configuration.md)):
 ## Core routes
 
 - `/` home/map
-- `/login`, `/logout`
+- `/login`, `POST /logout`
 - `/forgot-password`
 - `/reset-password?token=...`
 - `/request-account`

@@ -8,6 +8,8 @@
 - `nginx/default.conf`: optional local reverse proxy, see [WSGI setup](wsgi.md)
 
 Images contain no configuration or data; provide both through volume mounts.
+The image pins its official Python base by multi-architecture digest and runs as the
+unprivileged `10001:10001` user. Dependabot proposes digest and dependency updates.
 
 ## Setup
 
@@ -36,6 +38,8 @@ Important:
 - Set `baseUrl` to the public HTTPS URL used by browsers.
 - Use network-reachable hostnames for InfluxDB/SMTP, not `localhost`.
 - The process user needs write access to `authDbPath` and `<pathStorage>/_logos`.
+- On Linux, make writable bind mounts accessible to UID/GID 10001, for example
+  `sudo chown -R 10001:10001 ./data`. Do not make the directory world-writable.
 
 ## Build and start
 
@@ -45,17 +49,35 @@ docker compose ps
 docker compose logs -f web watchdog
 ```
 
+For a release deployment, replace each `build:` block with the immutable image
+published by CI, preferably its SHA tag:
+
+```yaml
+image: ghcr.io/ccmmma/sensor-network-pwa:sha-<git-commit>
+```
+
 - `web` serves the browser-facing application through Gunicorn
 - `watchdog` scans stations for anomalies, evaluates enabled workflows, and sends
   alarm/workflow emails; keep a single instance
 
 The image includes the repository `docs/` directory so the web service can render the
 canonical workflow and API reference at `/docs/workflows-api`.
+Docker reports the web container healthy only when `/health` can read the auth
+database, access configured CSV storage, and ping configured InfluxDB. The watchdog
+service disables this HTTP health check because it does not run a web server.
 
 ## Backup
 
-Stop these services and the collector before copying active SQLite/CSV files; see
-[operations](operations.md#backup-and-restore).
+Use the online SQLite backup and non-destructive restore drill:
+
+```bash
+docker compose exec web python -m sensor_network_pwa.maintenance \
+  --config /app/config.json backup /data/backups/auth-$(date +%F).sqlite
+docker compose exec web python -m sensor_network_pwa.maintenance \
+  --config /app/config.json drill
+```
+
+See [operations](operations.md#backup-and-restore) for the full restore procedure.
 
 ## Networking
 

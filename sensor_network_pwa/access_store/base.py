@@ -4,10 +4,11 @@ import secrets
 import sqlite3
 import threading
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 
 from sensor_network_pwa.access_store.schema import CAN_WORKFLOWS_MIGRATION, MIGRATIONS, SCHEMA_SQL
-from sensor_network_pwa.timeutil import now_utc_iso
+from sensor_network_pwa.timeutil import now_utc_iso, parse_iso_ts, utc_iso, utc_now
 
 
 class StoreBase:
@@ -82,3 +83,31 @@ class StoreBase:
             )
             row = con.execute("SELECT value FROM app_settings WHERE key = 'session_secret'").fetchone()
         return row["value"]
+
+    def healthcheck(self) -> bool:
+        """Exercise a read-only query without mutating operational state."""
+        with self._connect() as con:
+            return con.execute("SELECT 1").fetchone()[0] == 1
+
+    def rate_limit_exceeded(self, key_hash: str, limit: int, window_seconds: int) -> tuple[bool, int]:
+        """Atomically count an action across all workers using the shared database."""
+        now = utc_now()
+        with self._lock, self._connect() as con:
+            stale_before = now - timedelta(seconds=max(window_seconds, 86400))
+            con.execute("DELETE FROM rate_limits WHERE window_started_at < ?", (utc_iso(stale_before),))
+            row = con.execute(
+                "SELECT window_started_at,attempts FROM rate_limits WHERE key_hash=?",
+                (key_hash,),
+            ).fetchone()
+            started = parse_iso_ts(row["window_started_at"]) if row else None
+            if started is None or now - started >= timedelta(seconds=window_seconds):
+                con.execute(
+                    "INSERT INTO rate_limits(key_hash,window_started_at,attempts) VALUES(?,?,1) "
+                    "ON CONFLICT(key_hash) DO UPDATE SET window_started_at=excluded.window_started_at,attempts=1",
+                    (key_hash, now_utc_iso()),
+                )
+                return False, window_seconds
+            attempts = int(row["attempts"]) + 1
+            con.execute("UPDATE rate_limits SET attempts=? WHERE key_hash=?", (attempts, key_hash))
+            retry_after = max(1, window_seconds - int((now - started).total_seconds()))
+            return attempts > limit, retry_after

@@ -11,6 +11,7 @@
     <div class="d-flex flex-wrap gap-2 align-items-center">
       <a class="btn btn-outline-primary btn-sm" href="{{ url_for('stations.station_chart_settings_export', instrument_uuid=instrument_uuid) }}">Export JSON</a>
       <form id="chartSettingsImportForm" method="post" action="{{ url_for('stations.station_chart_settings_import', instrument_uuid=instrument_uuid) }}" enctype="multipart/form-data" class="d-flex gap-2 align-items-center">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input id="chartSettingsImportFile" class="form-control form-control-sm" type="file" name="settings_file" accept="application/json,.json" required>
         <input type="hidden" name="confirm_foreign_station" id="confirmForeignStation" value="0">
         <button class="btn btn-outline-secondary btn-sm" type="submit">Import JSON</button>
@@ -20,6 +21,7 @@
   </div></div>
 
   <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="table-responsive">
       <table class="table table-sm table-bordered align-middle">
         <thead>

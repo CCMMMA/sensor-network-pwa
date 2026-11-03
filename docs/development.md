@@ -1,5 +1,10 @@
 # Development and validation
 
+`requirements.txt` pins the direct runtime packages used across Python 3.10-3.14.
+`requirements-container.txt` additionally locks every transitive package in the
+Python 3.11 production image. When dependencies change, update both and rebuild the
+container; CI audits the production lock.
+
 ## Local setup
 
 ```bash

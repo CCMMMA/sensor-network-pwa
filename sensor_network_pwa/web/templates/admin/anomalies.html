@@ -19,6 +19,7 @@
         <td>
           {% if a.status == 'open' %}
           <form method="post" action="{{ url_for('admin.silence_anomaly') }}" class="d-flex gap-1">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="station_uuid" value="{{ a.station_uuid }}">
             <input type="hidden" name="anomaly_type" value="{{ a.anomaly_type }}">
             <input class="form-control form-control-sm" style="max-width:110px" type="number" min="1" max="24" name="hours" value="24">

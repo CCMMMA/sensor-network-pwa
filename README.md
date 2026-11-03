@@ -1,5 +1,10 @@
 # sensor-network-pwa
 
+Production readiness includes per-session CSRF protection, shared multi-worker login
+and reset throttling, restrictive browser security headers, dependency readiness at
+`/health`, a non-root digest-pinned container, and built-in load/backup verification
+commands. See [operations](docs/operations.md) and [Docker deployment](docs/docker.md).
+
 Research-oriented Progressive Web App for discovering, visualising and using observations
 from the meteo@uniparthenope sensor network. It combines public station dashboards,
 controlled historical access, reproducible data APIs and event-driven workflows in one

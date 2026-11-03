@@ -1,0 +1,19 @@
+# Fully resolved Python 3.11 production image lock. Updated by Dependabot and
+# verified by the container build, pip-audit, Trivy, and the multi-version tests.
+blinker==1.9.0
+certifi==2026.10.23
+click==8.5.0
+Flask==3.1.3
+gunicorn==23.0.0
+influxdb-client==1.50.0
+itsdangerous==2.2.0
+Jinja2==3.1.6
+Markdown==3.10.3
+MarkupSafe==3.0.4
+packaging==26.3
+python-dateutil==4.0.0
+reactivex==6.1.0
+typing-extensions==4.16.0
+tzdata==2026.6
+urllib3==2.8.0
+Werkzeug==3.1.9

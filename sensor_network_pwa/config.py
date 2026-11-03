@@ -99,6 +99,14 @@ def _web_settings(raw: dict, storage_root) -> dict:
         "privacy_audit_retention_days": int(
             cfg_value(raw, ["privacyAuditRetentionDays"], env_name="PRIVACY_AUDIT_RETENTION_DAYS", default=365)
         ),
+        "login_rate_limit": int(cfg_value(raw, ["loginRateLimit"], env_name="LOGIN_RATE_LIMIT", default=10)),
+        "login_rate_window_sec": int(
+            cfg_value(raw, ["loginRateWindowSec"], env_name="LOGIN_RATE_WINDOW_SEC", default=300)
+        ),
+        "reset_rate_limit": int(cfg_value(raw, ["resetRateLimit"], env_name="RESET_RATE_LIMIT", default=5)),
+        "reset_rate_window_sec": int(
+            cfg_value(raw, ["resetRateWindowSec"], env_name="RESET_RATE_WINDOW_SEC", default=3600)
+        ),
     }
 
 

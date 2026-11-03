@@ -5,7 +5,7 @@
     <a href="{{ url_for('public.index') }}">Home</a> |
     <a href="{{ url_for('admin.anomalies_log') }}">Anomalies log</a> |
     <a href="{{ url_for('auth.change_password') }}">Change password</a> |
-    <a href="{{ url_for('auth.logout') }}">Logout</a>
+    <form method="post" action="{{ url_for('auth.logout') }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-link p-0 align-baseline">Logout</button></form>
   </p>
   <h1 class="h4">Profile</h1>
   {% for category, message in get_flashed_messages(with_categories=true) %}
@@ -31,6 +31,7 @@
     While the failure persists, a reminder is sent at each notification time.
   </p>
   <form method="post" action="{{ url_for('profile.notification_interval') }}" class="row g-2 align-items-end mb-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="col-auto">
       <label class="form-label" for="notification-minutes">Notification time</label>
       <select class="form-select form-select-sm" id="notification-minutes" name="minutes">
@@ -59,6 +60,7 @@
         <td>{{ n.state }}</td>
         <td>
           <form method="post" action="{{ url_for('profile.notification_action', notification_id=n.id) }}" class="d-flex flex-wrap gap-1">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             {% if n.can_acknowledge %}
               <button class="btn btn-outline-primary btn-sm" type="submit" name="action" value="acknowledge" title="Stop the reminders of this failure">Acknowledge</button>
             {% endif %}

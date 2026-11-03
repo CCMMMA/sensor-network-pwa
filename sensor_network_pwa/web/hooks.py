@@ -1,6 +1,8 @@
 """Request hooks: cross-site write rejection, enforced password change, response headers and compression."""
 
 import gzip
+import hmac
+import secrets
 from urllib.parse import urlsplit
 
 from flask import abort, g, redirect, request, session, url_for
@@ -33,6 +35,18 @@ PASSWORD_CHANGE_EXEMPT_ENDPOINTS = frozenset(
     }
 )
 
+CACHEABLE_ASSET_ENDPOINTS = frozenset(
+    {
+        "public.asset_file",
+        "public.documentation_asset",
+        "static",
+        "pwa.manifest",
+        "pwa.service_worker",
+        "pwa.icon",
+        "pwa.offline",
+    }
+)
+
 AUDITED_ENDPOINTS = {
     "public.station": "station_dashboard",
     "stations.browse_station": "station_view",
@@ -41,6 +55,27 @@ AUDITED_ENDPOINTS = {
     "api.query": "api_query",
     "api.download": "api_download",
 }
+
+
+def csrf_token() -> str:
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["csrf_token"] = token
+    return token
+
+
+def protect_against_csrf():
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    authorization = request.headers.get("Authorization", "")
+    if authorization.lower().startswith("bearer "):
+        return None
+    supplied = request.headers.get("X-CSRF-Token") or request.form.get("csrf_token") or ""
+    expected = session.get("csrf_token") or ""
+    if not supplied or not expected or not hmac.compare_digest(str(supplied), str(expected)):
+        abort(403, "Invalid or missing CSRF token")
+    return None
 
 
 def reject_cross_site_writes():
@@ -76,9 +111,26 @@ def reject_cross_site_writes():
 
 def add_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
     # Cross-origin map providers require the requesting site's origin for abuse control.
     # This policy sends only the origin over HTTPS, without leaking URL paths or queries.
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://unpkg.com; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; img-src 'self' data: https:; "
+        "connect-src 'self'; font-src 'self' https://cdn.jsdelivr.net; object-src 'none'; "
+        "base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    )
+    if urlsplit(get_cfg().get("base_url") or "").scheme.lower() == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    # Authenticated pages and bearer-token responses may contain private station or
+    # account data. Do not leave them in a browser or intermediary cache. Static and
+    # generated PWA assets retain their route-specific caching policy.
+    if request.endpoint not in CACHEABLE_ASSET_ENDPOINTS and (
+        session.get("username") or request.headers.get("Authorization")
+    ):
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 
@@ -156,7 +208,9 @@ def record_access_event(response):
 def init_app(app):
     # before_request hooks run in registration order; after_request hooks in reverse.
     app.before_request(reject_cross_site_writes)
+    app.before_request(protect_against_csrf)
     app.before_request(enforce_password_change)
+    app.jinja_env.globals["csrf_token"] = csrf_token
     app.after_request(add_security_headers)
     app.after_request(compress_response)
     app.after_request(record_access_event)

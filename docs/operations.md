@@ -1,5 +1,13 @@
 # Operations
 
+Authenticated pages and API responses are sent with `Cache-Control: no-store` so private station and account data are not retained by browser or intermediary caches. All responses deny framing, and deployments whose `baseUrl` uses HTTPS send a one-year HSTS policy. Keep `baseUrl` aligned with the public URL; only enable HTTPS there when the portal is consistently available over HTTPS.
+
+Browser writes use a per-session CSRF token in addition to Origin/Referer checks.
+Login and password-reset attempts are throttled in the shared SQLite database, so
+limits apply across Gunicorn workers. A Content Security Policy restricts scripts and
+styles to this origin plus the UI CDN origins, blocks plugins and framing, and allows
+HTTPS map imagery.
+
 Operate the PWA as one part of the layered system described in
 [Architecture and data flows](architecture.md). A healthy portal does not by itself
 prove that edge acquisition is healthy; verify each boundary independently.
@@ -30,6 +38,10 @@ create a short-lived test token, and query an allowed station with its Bearer va
 Open `/workflows` with a workflow-enabled account and confirm its readable stations are offered. The watchdog logs
 `Watchdog started (interval=...)`.
 
+Check readiness with `curl --fail https://portal.example.org/health`. A `503`
+identifies the failing dependency as `database`, `storage`, or `influxdb` without
+disclosing credentials or filesystem paths.
+
 The application publishes the canonical [workflow and API reference](workflows-api.md)
 at `/docs/workflows-api`; use it when verifying authentication, graph structure, and
 edge-triggered execution.
@@ -41,9 +53,39 @@ anomaly/notification state, the outgoing email queue, administrator impersonatio
 user access/download log; the configuration holds secrets. Administrators can inspect and export that log at
 `/admin/access-log`.
 Keep both private.
-For a consistent copy, stop the web and watchdog services (and the collector,
-for the CSV files) before archiving the data directory, then start them again. An image
-rollback does not roll back the SQLite schema.
+Create a transactionally consistent online backup while the application is running:
+
+```bash
+python -m sensor_network_pwa.maintenance --config config.json \
+  backup /secure-backups/auth-2026-11-03.sqlite
+python -m sensor_network_pwa.maintenance --config config.json drill
+```
+
+The command refuses to overwrite a backup and runs `PRAGMA integrity_check`. The
+drill restores into a disposable directory, checks required tables, and compares the
+user count without touching the live database. Run it after every backup-system
+change and at least quarterly.
+
+To restore for real: stop web and watchdog processes, preserve the failed database,
+run the drill against the selected backup, copy it to `authDbPath` with ownership and
+mode preserved, start one web worker, verify `/health` and account access, then start
+the remaining workers and watchdog. Stop the collector as well when restoring the CSV
+tree. An image rollback does not roll back the SQLite schema.
+
+## Load testing
+
+Run the dependency-free probe from a host with production-like network and storage
+latency. Use a public test station and do not target the public service without an
+approved test window:
+
+```bash
+python -m sensor_network_pwa.loadtest https://portal.example.org STATION_UUID \
+  --requests 500 --concurrency 20
+```
+
+It exercises dashboard snapshot polling and the public station page and reports
+median, p95, maximum latency, and failures. Record the dataset size and results in the
+release ticket; investigate failures or a p95 above the deployment's SLO.
 
 ## Troubleshooting
 
@@ -64,6 +106,8 @@ rollback does not roll back the SQLite schema.
 | Duplicate alarm or workflow emails | More than one watchdog process is running. |
 | Too many or too few reminder emails | Each user sets the notification time on `/profile` (default 60 minutes). |
 | Forms return `403 Cross-site request rejected` | The browser's origin host differs from the request host, forwarded host, and `baseUrl` host. Set `baseUrl` to the URL users open and forward `Host`/`X-Forwarded-Host` from the proxy. |
+| Forms or session JSON return `403 Invalid or missing CSRF token` | Reload the page to obtain a fresh session token. Custom browser clients submit `csrf_token`; same-origin JavaScript sends `X-CSRF-Token`. Bearer API clients are exempt. |
+| Login/reset returns `429` | Wait for `Retry-After`. Repeated responses can indicate credential attacks. |
 | Map tiles show `403 Access blocked` | Use the canonical default `mapTileUrl`, keep the app's `strict-origin-when-cross-origin` response policy, and ensure a reverse proxy does not replace it with a policy that removes cross-origin referrers. For sustained public traffic, configure a suitable tile provider and its required attribution. |
 | Admin is sent to `/change-password` at first login | The account was created with the default or a sample `adminPassword`; choose a strong password. |
 | Dashboards are slow | Check the storage latency of `pathStorage` and that files follow `<station>/YYYY/MM/DD/<station>_YYYYMMDDZHH00.csv`; files elsewhere are found but cannot be skipped by date. With InfluxDB enabled, check its query time (`Influx query failed` warnings). |

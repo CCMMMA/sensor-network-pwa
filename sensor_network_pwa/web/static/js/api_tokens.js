@@ -1,5 +1,6 @@
 (() => {
   "use strict";
+  const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
   const rows = document.getElementById("tokenRows");
   const message = (text, danger = false) => {
     const element = document.getElementById("tokenMessage");
@@ -7,7 +8,7 @@
     element.className = `alert alert-${danger ? "danger" : "success"}`;
   };
   const request = async (url, options = {}) => {
-    const response = await fetch(url, {...options, headers: {"Content-Type": "application/json"}});
+    const response = await fetch(url, {...options, headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken}});
     if (!response.ok) {
       let detail;
       try { detail = (await response.json()).error; } catch (_) { detail = await response.text(); }
