@@ -13,7 +13,7 @@ MarkupSafe==3.0.4
 packaging==26.3
 Pillow==13.0.0
 psycopg-binary==3.2.12
-SQLAlchemy==2.0.44
+SQLAlchemy==2.1.8
 python-dateutil==4.0.0
 reactivex==6.1.0
 typing-extensions==4.16.0
